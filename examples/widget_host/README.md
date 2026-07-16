@@ -7,13 +7,14 @@ short-lived Customer Token.
 npm run build -w @ai-support/demo
 export SUPPORT_PLATFORM_URL=http://localhost:8000
 export SUPPORT_APPLICATION_API_KEY='acs_...'
+export SUPPORT_APPLICATION_ID='<application UUID from the admin console>'
 export SUPPORT_APPLICATION_ORIGIN=http://localhost:8081
 export SUPPORT_DEMO_USER_ID=neutral-demo-user
 uv run uvicorn examples.widget_host.main:app --port 8081
 ```
 
 Open `http://localhost:8081`. The configured origin must also be present in the application's
-allowed origins.
+allowed origins. `SUPPORT_APPLICATION_ID` is the public application UUID; it is not a Secret.
 
 `SUPPORT_DEMO_USER_ID` exists only to keep this neutral example runnable. A production host must
 remove that setting and derive `external_user_id` from its authenticated server-side user session.

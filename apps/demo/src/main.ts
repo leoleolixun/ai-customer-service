@@ -14,8 +14,14 @@ import type { AISupportWidgetElement } from '@ai-support/widget';
 
 const widget = document.querySelector<AISupportWidgetElement>('#support-widget');
 if (widget) {
-  widget.setAttribute('base-url', import.meta.env.VITE_SUPPORT_BASE_URL ?? window.location.origin);
-  widget.setAttribute('application-id', import.meta.env.VITE_SUPPORT_APPLICATION_ID ?? 'demo');
+  widget.setAttribute(
+    'base-url',
+    import.meta.env.VITE_SUPPORT_BASE_URL ?? widget.getAttribute('base-url') ?? window.location.origin,
+  );
+  widget.setAttribute(
+    'application-id',
+    import.meta.env.VITE_SUPPORT_APPLICATION_ID ?? widget.getAttribute('application-id') ?? 'demo',
+  );
   widget.setAttribute('session-key', 'northstar-demo-user');
   widget.tokenProvider = async () => {
     const response = await fetch(import.meta.env.VITE_SUPPORT_TOKEN_ENDPOINT ?? '/api/support-token', {

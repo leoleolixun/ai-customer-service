@@ -1,9 +1,10 @@
 import os
+from html import escape
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Support Widget Host Example", docs_url=None, redoc_url=None)
@@ -11,6 +12,7 @@ app = FastAPI(title="Support Widget Host Example", docs_url=None, redoc_url=None
 platform_url = os.getenv("SUPPORT_PLATFORM_URL", "http://localhost:8000").rstrip("/")
 application_api_key = os.getenv("SUPPORT_APPLICATION_API_KEY", "")
 application_origin = os.getenv("SUPPORT_APPLICATION_ORIGIN", "http://localhost:8081")
+application_id = os.getenv("SUPPORT_APPLICATION_ID", "demo")
 demo_user_id = os.getenv("SUPPORT_DEMO_USER_ID", "neutral-demo-user")
 demo_dist = Path(__file__).resolve().parents[2] / "apps" / "demo" / "dist"
 
@@ -45,9 +47,19 @@ if demo_dist.exists():
 
 
 @app.get("/{path:path}", include_in_schema=False)
-async def demo_page(path: str) -> FileResponse:
+def demo_page(path: str) -> HTMLResponse:
     del path
     index = demo_dist / "index.html"
     if not index.exists():
         raise HTTPException(status_code=503, detail="Build apps/demo before starting this host.")
-    return FileResponse(index)
+    content = index.read_text(encoding="utf-8")
+    widget_id = 'id="support-widget"'
+    if widget_id not in content:
+        raise HTTPException(
+            status_code=503, detail="Demo build does not contain the support widget."
+        )
+    runtime_config = (
+        f'{widget_id}\n      base-url="{escape(platform_url, quote=True)}"'
+        f'\n      application-id="{escape(application_id, quote=True)}"'
+    )
+    return HTMLResponse(content.replace(widget_id, runtime_config, 1))
