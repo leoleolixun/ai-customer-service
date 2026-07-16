@@ -44,3 +44,34 @@ uv run python scripts/performance_baseline.py \
 
 Fake Provider 只用于排除供应商网络和生成耗时，不能证明真实模型首 Token 延迟。真实 Provider 的少量
 Smoke Test 和首 Token P95 必须单独记录。
+
+## 5. 真实 Provider Smoke Test
+
+真实模型验收使用 `scripts/real_provider_smoke.py`。API Key 只从进程环境变量读取，不能放入命令参数、
+输出文件或 Git。下面示例执行 10 次流式对话，并以 5 秒首 Token P95 作为门槛：
+
+```bash
+(
+read -r -s -p "Provider API Key: " AI_CS_PROVIDER_API_KEY
+export AI_CS_PROVIDER_API_KEY
+printf '\n'
+uv run python scripts/real_provider_smoke.py \
+  --base-url https://provider.example.com/v1 \
+  --chat-model provider-chat-model \
+  --samples 10 \
+  --first-token-target-ms 5000 \
+  --output /tmp/ai-cs-real-provider.json \
+  --enforce
+)
+```
+
+供应商同时提供兼容的 Embedding API 时，增加：
+
+```text
+--embedding-model provider-embedding-model --embedding-dimensions 1024
+```
+
+脚本先请求 `/models`，再测量每次流式请求的首 Token 和完成耗时；可选 Embedding 检查只记录返回向量数、
+维度和数值是否有限。报告不会保存 API Key、回答正文或向量值。发布记录必须注明供应商、模型、运行区域、
+样本数和未达到 5 秒目标时的网络或供应商原因。该脚本验证 Provider 协议和供应商延迟，完整平台链路还要
+在管理后台激活同一 Chat 模型，并通过 Widget 完成一次带引用问答。
