@@ -31,13 +31,15 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'npm run dev:admin -- --host 127.0.0.1 --strictPort',
+      command:
+        'npm run dev --workspace @ai-support/admin -- --host 127.0.0.1 --strictPort',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       url: 'http://127.0.0.1:5173/login',
     },
     {
-      command: 'npm run dev:demo -- --host 127.0.0.1 --strictPort',
+      command:
+        'npm run dev --workspace @ai-support/demo -- --host 127.0.0.1 --strictPort',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       url: 'http://127.0.0.1:5174',
