@@ -1,0 +1,612 @@
+from __future__ import annotations
+
+import hashlib
+import mimetypes
+from pathlib import Path
+from typing import NoReturn
+from urllib.parse import urlsplit
+from uuid import UUID, uuid4
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import AppError
+from app.core.security import StaffPrincipal
+from app.domains.applications.models import Application
+from app.domains.applications.repository import ApplicationRepository
+from app.domains.audit.repository import AuditRepository
+from app.domains.knowledge.models import (
+    DocumentStatus,
+    IngestionJob,
+    KnowledgeBase,
+    KnowledgeBaseStatus,
+    KnowledgeDocument,
+)
+from app.domains.knowledge.parsing import SUPPORTED_MIME_TYPES, chunk_text, extract_text, lexicalize
+from app.domains.knowledge.repository import KnowledgeRepository, RetrievedChunk
+from app.domains.knowledge.schemas import (
+    KnowledgeBaseCreate,
+    KnowledgeBaseUpdate,
+)
+from app.domains.model_gateway.models import ModelPurpose, ModelStatus, ProviderStatus
+from app.domains.model_gateway.repository import ModelGatewayRepository
+from app.providers.llm.factory import build_embedding_provider
+from app.providers.storage.base import ObjectStorage
+
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+
+
+class KnowledgeBaseService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.knowledge = KnowledgeRepository(session)
+        self.models = ModelGatewayRepository(session)
+        self.applications = ApplicationRepository(session)
+        self.audit = AuditRepository(session)
+
+    async def create(
+        self,
+        *,
+        tenant_id: UUID,
+        request: KnowledgeBaseCreate,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> KnowledgeBase:
+        model_config = await self.models.get_model_config(
+            tenant_id=tenant_id,
+            model_config_id=request.embedding_model_config_id,
+        )
+        if (
+            model_config is None
+            or model_config.purpose != ModelPurpose.EMBEDDING
+            or model_config.embedding_dimension is None
+        ):
+            raise AppError(
+                status_code=400,
+                code="embedding_model_required",
+                title="Embedding model required",
+                detail="The knowledge base requires a tenant embedding model configuration.",
+            )
+        account = await self.models.get_available_account(
+            account_id=model_config.provider_account_id, tenant_id=tenant_id
+        )
+        if account is None or account.status != ProviderStatus.READY:
+            raise AppError(
+                status_code=400,
+                code="provider_account_not_ready",
+                title="Provider account not ready",
+                detail="The embedding provider account must pass its connection test.",
+            )
+        try:
+            knowledge_base = await self.knowledge.create_base(
+                tenant_id=tenant_id,
+                name=request.name.strip(),
+                description=request.description.strip(),
+                model_config=model_config,
+                embedding_version=request.embedding_version,
+            )
+            model_config.status = ModelStatus.ACTIVE
+            await self._audit(actor, "knowledge_base.create", knowledge_base.id, request_id)
+            await self.session.commit()
+            await self.session.refresh(knowledge_base)
+            return knowledge_base
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise AppError(
+                status_code=409,
+                code="knowledge_base_name_conflict",
+                title="Knowledge base already exists",
+                detail="A knowledge base with this name already exists in the tenant.",
+            ) from exc
+
+    async def list_bases(self, tenant_id: UUID) -> list[KnowledgeBase]:
+        return await self.knowledge.list_bases(tenant_id)
+
+    async def update(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        request: KnowledgeBaseUpdate,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> KnowledgeBase:
+        knowledge_base = await self._get_base(tenant_id, base_id)
+        if request.name is not None:
+            knowledge_base.name = request.name.strip()
+        if request.description is not None:
+            knowledge_base.description = request.description.strip()
+        if request.status is not None:
+            knowledge_base.status = request.status
+        try:
+            await self.session.flush()
+            await self._audit(actor, "knowledge_base.update", knowledge_base.id, request_id)
+            await self.session.commit()
+            await self.session.refresh(knowledge_base)
+            return knowledge_base
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise AppError(
+                status_code=409,
+                code="knowledge_base_name_conflict",
+                title="Knowledge base already exists",
+                detail="A knowledge base with this name already exists in the tenant.",
+            ) from exc
+
+    async def bind(
+        self,
+        *,
+        tenant_id: UUID,
+        application_id: UUID,
+        base_id: UUID,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> None:
+        knowledge_base = await self._get_base(tenant_id, base_id)
+        application = await self.applications.get_by_id(
+            tenant_id=tenant_id, application_id=application_id
+        )
+        if application is None:
+            raise AppError(
+                status_code=404,
+                code="application_not_found",
+                title="Application not found",
+                detail="The requested application does not exist in this tenant.",
+            )
+        await self.knowledge.bind(
+            tenant_id=tenant_id,
+            application_id=application.id,
+            base_id=knowledge_base.id,
+        )
+        await self._audit(actor, "knowledge_base.bind", knowledge_base.id, request_id)
+        await self.session.commit()
+
+    async def list_bound_applications(self, *, tenant_id: UUID, base_id: UUID) -> list[Application]:
+        await self._get_base(tenant_id, base_id)
+        return await self.knowledge.list_bound_applications(
+            tenant_id=tenant_id,
+            base_id=base_id,
+        )
+
+    async def unbind(
+        self,
+        *,
+        tenant_id: UUID,
+        application_id: UUID,
+        base_id: UUID,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> None:
+        await self._get_base(tenant_id, base_id)
+        await self.knowledge.unbind(
+            tenant_id=tenant_id, application_id=application_id, base_id=base_id
+        )
+        await self._audit(actor, "knowledge_base.unbind", base_id, request_id)
+        await self.session.commit()
+
+    async def search(
+        self, *, tenant_id: UUID, base_id: UUID, query: str, top_k: int
+    ) -> list[RetrievedChunk]:
+        knowledge_base = await self._get_base(tenant_id, base_id)
+        if knowledge_base.status != KnowledgeBaseStatus.ACTIVE:
+            return []
+        model_config = await self.models.get_model_config(
+            tenant_id=tenant_id,
+            model_config_id=knowledge_base.embedding_model_config_id,
+        )
+        if model_config is None or model_config.embedding_dimension is None:
+            raise AppError(
+                status_code=503,
+                code="embedding_model_unavailable",
+                title="Embedding model unavailable",
+                detail="The knowledge base embedding model is unavailable.",
+            )
+        account = await self.models.get_available_account(
+            account_id=model_config.provider_account_id, tenant_id=tenant_id
+        )
+        if account is None or account.status != ProviderStatus.READY:
+            raise AppError(
+                status_code=503,
+                code="embedding_provider_unavailable",
+                title="Embedding provider unavailable",
+                detail="The knowledge base embedding provider is unavailable.",
+            )
+        provider = build_embedding_provider(account)
+        vectors = await provider.embed(
+            texts=[query],
+            model=model_config.model_name,
+            dimensions=model_config.embedding_dimension,
+        )
+        if not vectors or len(vectors[0]) != knowledge_base.embedding_dimension:
+            raise AppError(
+                status_code=502,
+                code="embedding_dimension_mismatch",
+                title="Embedding dimension mismatch",
+                detail="The provider returned an unexpected embedding dimension.",
+            )
+        return await self.knowledge.search(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            query_vector=vectors[0],
+            lexical_query=lexicalize(query),
+            limit=top_k,
+        )
+
+    async def search_for_application(
+        self,
+        *,
+        tenant_id: UUID,
+        application_id: UUID,
+        query: str,
+        top_k: int = 5,
+    ) -> list[RetrievedChunk]:
+        bases = await self.knowledge.list_bound_bases(
+            tenant_id=tenant_id, application_id=application_id
+        )
+        combined: list[RetrievedChunk] = []
+        for knowledge_base in bases:
+            combined.extend(
+                await self.search(
+                    tenant_id=tenant_id,
+                    base_id=knowledge_base.id,
+                    query=query,
+                    top_k=max(top_k, 10),
+                )
+            )
+        combined.sort(key=lambda result: result.score, reverse=True)
+        return combined[:top_k]
+
+    async def _get_base(self, tenant_id: UUID, base_id: UUID) -> KnowledgeBase:
+        knowledge_base = await self.knowledge.get_base(tenant_id=tenant_id, base_id=base_id)
+        if knowledge_base is None:
+            self._raise_base_not_found()
+        return knowledge_base
+
+    async def _audit(
+        self, actor: StaffPrincipal, action: str, resource_id: UUID, request_id: str | None
+    ) -> None:
+        await self.audit.add(
+            tenant_id=actor.tenant_id,
+            actor_type="staff",
+            actor_id=str(actor.user_id),
+            action=action,
+            resource_type="knowledge_base",
+            resource_id=str(resource_id),
+            request_id=request_id,
+        )
+
+    @staticmethod
+    def _raise_base_not_found() -> NoReturn:
+        raise AppError(
+            status_code=404,
+            code="knowledge_base_not_found",
+            title="Knowledge base not found",
+            detail="The requested knowledge base does not exist in this tenant.",
+        )
+
+
+class DocumentService:
+    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+        self.session = session
+        self.storage = storage
+        self.knowledge = KnowledgeRepository(session)
+        self.audit = AuditRepository(session)
+
+    async def upload(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        title: str,
+        filename: str,
+        mime_type: str | None,
+        content: bytes,
+        source_url: str | None,
+        replace_document_id: UUID | None,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> tuple[KnowledgeDocument, IngestionJob]:
+        knowledge_base = await self.knowledge.get_base(tenant_id=tenant_id, base_id=base_id)
+        if knowledge_base is None:
+            KnowledgeBaseService._raise_base_not_found()
+        if not content or len(content) > MAX_DOCUMENT_BYTES:
+            raise AppError(
+                status_code=413,
+                code="document_size_invalid",
+                title="Document size invalid",
+                detail="Documents must contain data and may not exceed 10 MiB.",
+            )
+        safe_filename = Path(filename).name[:300]
+        resolved_mime = self._resolve_mime(safe_filename, mime_type)
+        self._validate_content(content, resolved_mime)
+        if source_url is not None:
+            parsed = urlsplit(source_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise AppError(
+                    status_code=422,
+                    code="source_url_invalid",
+                    title="Source URL invalid",
+                    detail="source_url must be an absolute HTTP or HTTPS URL.",
+                )
+        supersedes = None
+        if replace_document_id is not None:
+            supersedes = await self.knowledge.get_document(
+                tenant_id=tenant_id,
+                base_id=base_id,
+                document_id=replace_document_id,
+            )
+            if supersedes is None or supersedes.status == DocumentStatus.DELETED:
+                self._raise_document_not_found()
+
+        document_id = uuid4()
+        version = supersedes.version + 1 if supersedes else 1
+        object_key = (
+            f"tenants/{tenant_id}/knowledge/{base_id}/documents/"
+            f"{document_id}/v{version}/{safe_filename}"
+        )
+        content_hash = hashlib.sha256(content).hexdigest()
+        await self.storage.put(object_key, content, resolved_mime)
+        try:
+            document, job = await self.knowledge.create_document(
+                document_id=document_id,
+                tenant_id=tenant_id,
+                base_id=base_id,
+                supersedes=supersedes,
+                title=title.strip(),
+                filename=safe_filename,
+                source_url=source_url,
+                mime_type=resolved_mime,
+                byte_size=len(content),
+                object_key=object_key,
+                content_hash=content_hash,
+            )
+            await self.audit.add(
+                tenant_id=tenant_id,
+                actor_type="staff",
+                actor_id=str(actor.user_id),
+                action="knowledge_document.upload",
+                resource_type="knowledge_document",
+                resource_id=str(document.id),
+                request_id=request_id,
+            )
+            await self.session.commit()
+            await self.session.refresh(document)
+            await self.session.refresh(job)
+            return document, job
+        except Exception:
+            await self.session.rollback()
+            await self.storage.delete(object_key)
+            raise
+
+    async def list(self, *, tenant_id: UUID, base_id: UUID) -> list[KnowledgeDocument]:
+        await self._require_base(tenant_id, base_id)
+        return await self.knowledge.list_documents(tenant_id=tenant_id, base_id=base_id)
+
+    async def get(
+        self, *, tenant_id: UUID, base_id: UUID, document_id: UUID
+    ) -> tuple[KnowledgeDocument, IngestionJob]:
+        document = await self.knowledge.get_document(
+            tenant_id=tenant_id, base_id=base_id, document_id=document_id
+        )
+        if document is None or document.status == DocumentStatus.DELETED:
+            self._raise_document_not_found()
+        job = await self.knowledge.get_job(tenant_id=tenant_id, document_id=document_id)
+        if job is None:
+            raise AppError(
+                status_code=500,
+                code="ingestion_job_missing",
+                title="Ingestion job missing",
+                detail="The document ingestion state is inconsistent.",
+            )
+        return document, job
+
+    async def delete(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        document_id: UUID,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> None:
+        document = await self.knowledge.get_document_for_update(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            document_id=document_id,
+        )
+        if document is None or document.status == DocumentStatus.DELETED:
+            self._raise_document_not_found()
+        if document.status in {DocumentStatus.UPLOADED, DocumentStatus.PROCESSING}:
+            raise AppError(
+                status_code=409,
+                code="document_ingestion_in_progress",
+                title="Document ingestion in progress",
+                detail="Wait for ingestion to finish before deleting this document.",
+            )
+        await self.knowledge.delete_document(document)
+        await self.audit.add(
+            tenant_id=tenant_id,
+            actor_type="staff",
+            actor_id=str(actor.user_id),
+            action="knowledge_document.delete",
+            resource_type="knowledge_document",
+            resource_id=str(document.id),
+            request_id=request_id,
+        )
+        try:
+            # Delete the object before committing the tombstone. Object deletion is idempotent,
+            # so a later database failure can be retried without leaving an unreachable object.
+            await self.storage.delete(document.object_key)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def retry(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        document_id: UUID,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> tuple[KnowledgeDocument, IngestionJob]:
+        document = await self.knowledge.get_document_for_update(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            document_id=document_id,
+        )
+        if document is None or document.status == DocumentStatus.DELETED:
+            self._raise_document_not_found()
+        job = await self.knowledge.get_job(tenant_id=tenant_id, document_id=document_id)
+        if job is None:
+            raise AppError(
+                status_code=500,
+                code="ingestion_job_missing",
+                title="Ingestion job missing",
+                detail="The document ingestion state is inconsistent.",
+            )
+        if document.status not in {DocumentStatus.UPLOADED, DocumentStatus.FAILED}:
+            raise AppError(
+                status_code=409,
+                code="document_not_retryable",
+                title="Document cannot be retried",
+                detail="Only queued or failed documents can be queued for ingestion.",
+            )
+        await self.knowledge.prepare_retry(document, job)
+        await self.audit.add(
+            tenant_id=tenant_id,
+            actor_type="staff",
+            actor_id=str(actor.user_id),
+            action="knowledge_document.retry",
+            resource_type="knowledge_document",
+            resource_id=str(document.id),
+            request_id=request_id,
+        )
+        await self.session.commit()
+        await self.session.refresh(document)
+        await self.session.refresh(job)
+        return document, job
+
+    async def _require_base(self, tenant_id: UUID, base_id: UUID) -> KnowledgeBase:
+        knowledge_base = await self.knowledge.get_base(tenant_id=tenant_id, base_id=base_id)
+        if knowledge_base is None:
+            KnowledgeBaseService._raise_base_not_found()
+        return knowledge_base
+
+    @staticmethod
+    def _resolve_mime(filename: str, provided: str | None) -> str:
+        guessed, _ = mimetypes.guess_type(filename)
+        mime_type = provided if provided in SUPPORTED_MIME_TYPES else guessed
+        if mime_type not in SUPPORTED_MIME_TYPES:
+            raise AppError(
+                status_code=415,
+                code="document_type_unsupported",
+                title="Unsupported document type",
+                detail="Only UTF-8 TXT, Markdown, and text-based PDF files are supported.",
+            )
+        return mime_type
+
+    @staticmethod
+    def _validate_content(content: bytes, mime_type: str) -> None:
+        if mime_type == "application/pdf":
+            if not content.startswith(b"%PDF-"):
+                raise AppError(
+                    status_code=422,
+                    code="document_content_invalid",
+                    title="Document content invalid",
+                    detail="The uploaded file does not contain a valid PDF signature.",
+                )
+            return
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AppError(
+                status_code=422,
+                code="document_encoding_invalid",
+                title="Document encoding invalid",
+                detail="Text and Markdown documents must use UTF-8 encoding.",
+            ) from exc
+        if "\x00" in text:
+            raise AppError(
+                status_code=422,
+                code="document_content_invalid",
+                title="Document content invalid",
+                detail="Text documents may not contain null bytes.",
+            )
+
+    @staticmethod
+    def _raise_document_not_found() -> NoReturn:
+        raise AppError(
+            status_code=404,
+            code="document_not_found",
+            title="Document not found",
+            detail="The requested document does not exist in this knowledge base.",
+        )
+
+
+class IngestionService:
+    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+        self.session = session
+        self.storage = storage
+        self.knowledge = KnowledgeRepository(session)
+
+    async def process(self, *, tenant_id: UUID, document_id: UUID) -> None:
+        context = await self.knowledge.get_ingestion_context(
+            tenant_id=tenant_id, document_id=document_id
+        )
+        if context is None:
+            raise AppError(
+                status_code=404,
+                code="ingestion_context_not_found",
+                title="Ingestion context not found",
+                detail="The document or its embedding configuration is unavailable.",
+            )
+        document, knowledge_base, job, model_config, account = context
+        if document.status == DocumentStatus.READY and job.stage == "published":
+            return
+        try:
+            await self.knowledge.mark_job_running(document, job, stage="reading")
+            await self.session.commit()
+            content = await self.storage.get(document.object_key)
+            text = extract_text(content, document.mime_type)
+            drafts = chunk_text(text)
+            job.stage = "embedding"
+            await self.session.commit()
+            provider = build_embedding_provider(account)
+            embeddings = await provider.embed(
+                texts=[draft.content for draft in drafts],
+                model=model_config.model_name,
+                dimensions=knowledge_base.embedding_dimension,
+            )
+            if len(embeddings) != len(drafts) or any(
+                len(vector) != knowledge_base.embedding_dimension for vector in embeddings
+            ):
+                raise AppError(
+                    status_code=502,
+                    code="embedding_dimension_mismatch",
+                    title="Embedding dimension mismatch",
+                    detail="The provider returned an unexpected embedding shape.",
+                )
+            job.stage = "publishing"
+            await self.knowledge.replace_chunks(
+                document=document,
+                knowledge_base=knowledge_base,
+                drafts=drafts,
+                embeddings=embeddings,
+            )
+            await self.knowledge.mark_ingestion_completed(document, job)
+            await self.session.commit()
+        except Exception as exc:
+            await self.session.rollback()
+            context = await self.knowledge.get_ingestion_context(
+                tenant_id=tenant_id, document_id=document_id
+            )
+            if context is not None:
+                failed_document, _, failed_job, _, _ = context
+                detail = exc.detail if isinstance(exc, AppError) else str(exc)
+                await self.knowledge.mark_ingestion_failed(
+                    failed_document, failed_job, error=detail
+                )
+                await self.session.commit()
+            raise

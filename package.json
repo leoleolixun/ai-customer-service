@@ -1,0 +1,30 @@
+{
+  "name": "ai-customer-service-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:frontend": "vitest run --config vitest.workspace.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "dev:admin": "npm run dev --workspace @ai-support/admin",
+    "dev:demo": "npm run dev --workspace @ai-support/demo"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitejs/plugin-react": "^4.5.1",
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.7"
+  }
+}

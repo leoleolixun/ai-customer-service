@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up AI Customer Service PostgreSQL and MinIO data
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=ENV_FILE=/etc/ai-customer-service/production.env
+Environment=BACKUP_ROOT=/var/backups/ai-customer-service
+Environment=QUIESCE_WRITES=true
+ExecStart=/opt/ai-customer-service/current/scripts/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

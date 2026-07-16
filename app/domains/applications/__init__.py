@@ -1,0 +1,1 @@
+"""Tenant application domain."""

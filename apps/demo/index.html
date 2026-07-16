@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7f6" />
+    <title>Northstar Help Center</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Northstar Help Center home">
+        <span class="brand-mark" data-lucide="compass"></span>
+        <span>Northstar <strong>Help Center</strong></span>
+      </a>
+      <nav aria-label="Help center navigation">
+        <a href="#guides">Guides</a>
+        <a href="#status">Service status</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="search-band" aria-labelledby="help-title">
+        <div class="search-inner">
+          <p class="eyebrow">Northstar Support</p>
+          <h1 id="help-title">How can we help?</h1>
+          <label class="search-box">
+            <span data-lucide="search" aria-hidden="true"></span>
+            <span class="sr-only">Search help articles</span>
+            <input id="article-search" type="search" placeholder="Search help articles" />
+          </label>
+        </div>
+      </section>
+
+      <section class="content" id="guides" aria-label="Help topics">
+        <div class="topic-grid" id="topic-grid">
+          <article data-search="account profile password security">
+            <span class="topic-icon green" data-lucide="user-round"></span>
+            <h2>Account</h2>
+            <p>Profile settings, password recovery, and account security.</p>
+            <a href="#account">View articles <span data-lucide="arrow-right"></span></a>
+          </article>
+          <article data-search="subscription invoice payment billing plan">
+            <span class="topic-icon amber" data-lucide="receipt-text"></span>
+            <h2>Billing</h2>
+            <p>Plans, invoices, payment methods, and billing contacts.</p>
+            <a href="#billing">View articles <span data-lucide="arrow-right"></span></a>
+          </article>
+          <article data-search="workspace team member invitation role">
+            <span class="topic-icon blue" data-lucide="users"></span>
+            <h2>Workspace</h2>
+            <p>Invite teammates, assign roles, and manage your workspace.</p>
+            <a href="#workspace">View articles <span data-lucide="arrow-right"></span></a>
+          </article>
+        </div>
+
+        <div class="article-list">
+          <div>
+            <p class="eyebrow">Popular articles</p>
+            <h2>Common questions</h2>
+          </div>
+          <ul>
+            <li><a href="#reset">Reset a forgotten password <span data-lucide="chevron-right"></span></a></li>
+            <li><a href="#invoice">Download a monthly invoice <span data-lucide="chevron-right"></span></a></li>
+            <li><a href="#invite">Invite a workspace member <span data-lucide="chevron-right"></span></a></li>
+            <li><a href="#cancel">Cancel or change a subscription <span data-lucide="chevron-right"></span></a></li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer id="status">
+      <span><i></i> All systems operational</span>
+      <small>© 2026 Northstar</small>
+    </footer>
+
+    <ai-support-widget
+      id="support-widget"
+      title="Northstar Support"
+      welcome="Ask a question about your Northstar account."
+    ></ai-support-widget>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

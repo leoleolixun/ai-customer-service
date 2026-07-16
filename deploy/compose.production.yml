@@ -1,0 +1,234 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-customer-service}
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:?APP_ENV is required}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+  APP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+  APP_REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0
+  APP_S3_ENDPOINT_URL: http://minio:9000
+  APP_S3_ACCESS_KEY: ${APP_S3_ACCESS_KEY:?APP_S3_ACCESS_KEY is required}
+  APP_S3_SECRET_KEY: ${APP_S3_SECRET_KEY:?APP_S3_SECRET_KEY is required}
+  APP_S3_BUCKET: ${APP_S3_BUCKET:?APP_S3_BUCKET is required}
+  APP_S3_REGION: ${APP_S3_REGION:-us-east-1}
+  APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET is required}
+  APP_CREDENTIAL_PEPPER: ${APP_CREDENTIAL_PEPPER:?APP_CREDENTIAL_PEPPER is required}
+  APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY is required}
+  APP_ADMIN_ACCESS_TOKEN_MINUTES: ${APP_ADMIN_ACCESS_TOKEN_MINUTES:-60}
+  APP_CUSTOMER_TOKEN_MINUTES: ${APP_CUSTOMER_TOKEN_MINUTES:-15}
+  APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:?APP_CORS_ORIGINS is required}
+  APP_ALLOW_PRIVATE_PROVIDER_URLS: ${APP_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+
+x-app-service: &app-service
+  image: ${APP_IMAGE:?APP_IMAGE must be an immutable release tag}
+  environment: *app-environment
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  networks:
+    - app
+    - data
+  logging: &default-logging
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    shm_size: 256mb
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    logging: *default-logging
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - /bin/sh
+      - -eu
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - data
+    logging: *default-logging
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_BROWSER: "off"
+    command: server /data
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:9000/minio/health/live
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    logging: *default-logging
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      APP_S3_ACCESS_KEY: ${APP_S3_ACCESS_KEY:?APP_S3_ACCESS_KEY is required}
+      APP_S3_SECRET_KEY: ${APP_S3_SECRET_KEY:?APP_S3_SECRET_KEY is required}
+      APP_S3_BUCKET: ${APP_S3_BUCKET:?APP_S3_BUCKET is required}
+    entrypoint:
+      - /bin/sh
+      - -eu
+      - -c
+    command:
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${APP_S3_BUCKET}"
+        if ! mc admin user info local "$${APP_S3_ACCESS_KEY}" >/dev/null 2>&1; then
+          mc admin user add local "$${APP_S3_ACCESS_KEY}" "$${APP_S3_SECRET_KEY}"
+        fi
+        mc admin policy attach local readwrite --user "$${APP_S3_ACCESS_KEY}"
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - data
+    logging: *default-logging
+
+  api:
+    <<: *app-service
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    ports:
+      - 127.0.0.1:${APP_PORT:-8000}:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)
+      interval: 15s
+      timeout: 6s
+      retries: 8
+      start_period: 30s
+
+  worker:
+    <<: *app-service
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  migrate:
+    <<: *app-service
+    command:
+      - alembic
+      - upgrade
+      - head
+    restart: "no"
+    profiles:
+      - operations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  minio-client:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      APP_S3_BUCKET: ${APP_S3_BUCKET:?APP_S3_BUCKET is required}
+      APP_S3_ACCESS_KEY: ${APP_S3_ACCESS_KEY:?APP_S3_ACCESS_KEY is required}
+      APP_S3_SECRET_KEY: ${APP_S3_SECRET_KEY:?APP_S3_SECRET_KEY is required}
+    entrypoint:
+      - /bin/sh
+    profiles:
+      - operations
+    networks:
+      - data
+
+  postgres-tools:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
+    entrypoint:
+      - /bin/sh
+    profiles:
+      - operations
+    networks:
+      - data
+
+networks:
+  app:
+  data:
+    internal: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
