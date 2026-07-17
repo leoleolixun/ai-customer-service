@@ -52,7 +52,7 @@ def demo_page(path: str) -> HTMLResponse:
     index = demo_dist / "index.html"
     if not index.exists():
         raise HTTPException(status_code=503, detail="Build apps/demo before starting this host.")
-    content = index.read_text(encoding="utf-8")
+    content = index.read_text(encoding="utf-8").replace("/demo/assets/", "/assets/")
     widget_id = 'id="support-widget"'
     if widget_id not in content:
         raise HTTPException(

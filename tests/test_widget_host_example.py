@@ -12,7 +12,11 @@ def test_widget_host_injects_runtime_platform_and_application(
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text(
-        '<ai-support-widget id="support-widget"></ai-support-widget>',
+        (
+            '<script type="module" src="/demo/assets/index-entry.js"></script>'
+            '<link rel="stylesheet" href="/demo/assets/index-entry.css">'
+            '<ai-support-widget id="support-widget"></ai-support-widget>'
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(widget_host, "demo_dist", dist)
@@ -24,3 +28,6 @@ def test_widget_host_injects_runtime_platform_and_application(
 
     assert 'base-url="https://support.example.com"' in content
     assert 'application-id="application-123"' in content
+    assert 'src="/assets/index-entry.js"' in content
+    assert 'href="/assets/index-entry.css"' in content
+    assert "/demo/assets/" not in content
