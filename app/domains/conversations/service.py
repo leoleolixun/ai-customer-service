@@ -107,6 +107,43 @@ LOCALIZED_REFUSALS = {
         ),
     },
 }
+LOCALIZED_SYSTEM_RESPONSES = {
+    ConversationLocale.EN: {
+        "greeting": (
+            "Hello! I'm the AI support assistant for this application. Describe what you need "
+            "help with and I'll answer from the knowledge authorized for this application. You "
+            "can also contact a human support agent when needed."
+        ),
+        "identity": (
+            "I'm the AI support assistant for this application. The underlying model is "
+            "configured by the tenant administrator. I answer from authorized knowledge and "
+            "don't expose credentials or hidden configuration."
+        ),
+        "capabilities": (
+            "I can answer questions from this application's authorized knowledge, show the "
+            "supporting sources, say when verified information is insufficient, and help you "
+            "contact a human support agent. I can't perform unauthorized actions or access data "
+            "from another user or tenant."
+        ),
+    },
+    ConversationLocale.ZH_CN: {
+        "greeting": (
+            "你好！我是当前应用的 AI 客服。请直接描述需要帮助的问题，"  # noqa: RUF001
+            "我会依据当前应用授权的知识库回答；"  # noqa: RUF001
+            "需要时也可以联系人工客服。"
+        ),
+        "identity": (
+            "你好，我是当前应用的 AI 客服。"  # noqa: RUF001
+            "底层模型由租户管理员配置；我会依据已授权的知识回答，"  # noqa: RUF001
+            "不会泄露凭据或隐藏配置。"
+        ),
+        "capabilities": (
+            "我可以依据当前应用授权的知识库回答问题、提供引用来源、"
+            "在已验证信息不足时明确说明，并帮你联系人工客服。"  # noqa: RUF001
+            "我不能执行未授权操作，也不能访问其他用户或租户的数据。"  # noqa: RUF001
+        ),
+    },
+}
 RELATIVE_EVIDENCE_SCORE_FLOOR = 0.9
 INDIRECT_PROMPT_INJECTION_PATTERNS = (
     re.compile(
@@ -563,9 +600,13 @@ class ConversationService:
             )
         model_config, provider_account = active
         security_refusal = self._requires_security_refusal(content)
-        requires_human = not security_refusal and self._requires_human(content)
+        system_intent = None if security_refusal else self._system_intent(content)
+        requires_human = (
+            not security_refusal and system_intent is None and self._requires_human(content)
+        )
         unverifiable_request = (
             not security_refusal
+            and system_intent is None
             and not requires_human
             and self._requires_unverifiable_refusal(content)
         )
@@ -573,6 +614,9 @@ class ConversationService:
         if security_refusal:
             evidence: list[RetrievedChunk] = []
             grounding_status = "security_refusal"
+        elif system_intent is not None:
+            evidence = []
+            grounding_status = f"system_{system_intent}"
         elif requires_human:
             evidence = []
             grounding_status = "human_required"
@@ -670,7 +714,7 @@ class ConversationService:
         try:
             await self._ensure_ai_reply_allowed(prepared)
             if prepared.grounding_status != "evidence" or not prepared.evidence:
-                async for event in self._complete_refusal(prepared, model_config):
+                async for event in self._complete_rule_response(prepared, model_config):
                     yield event
                 return
             provider = build_chat_provider(prepared.provider_account)
@@ -747,11 +791,14 @@ class ConversationService:
                 {"code": "model_provider_failed", "message": "The model request failed."},
             )
 
-    async def _complete_refusal(
+    async def _complete_rule_response(
         self, prepared: PreparedChat, model_config: AIModelConfig
     ) -> AsyncIterator[str]:
         localized = LOCALIZED_REFUSALS[prepared.locale]
-        response = localized.get(prepared.grounding_status, localized["no_evidence"])
+        system_intent = prepared.grounding_status.removeprefix("system_")
+        response = LOCALIZED_SYSTEM_RESPONSES[prepared.locale].get(system_intent)
+        if response is None:
+            response = localized.get(prepared.grounding_status, localized["no_evidence"])
         await self._ensure_ai_reply_allowed(prepared)
         yield self._sse("message.delta", {"delta": response})
         await self._ensure_ai_reply_allowed(prepared, for_update=True)
@@ -1027,6 +1074,66 @@ class ConversationService:
             "自称超级管理员",
         )
         return any(phrase in normalized for phrase in phrases)
+
+    @staticmethod
+    def _system_intent(content: str) -> str | None:
+        normalized = re.sub(r"[^\w\u4e00-\u9fff]+", " ", content.casefold()).strip()
+        compact = normalized.replace(" ", "")
+
+        identity_phrases = (
+            "who are you",
+            "what are you",
+            "what model are you",
+            "what model do you use",
+            "which model are you",
+            "are you a bot",
+            "are you an ai",
+            "what is your name",
+            "你是谁",
+            "你是什么模型",
+            "你用的什么模型",
+            "你叫什么",
+            "你是机器人吗",
+            "你是ai吗",
+            "你是人工智能吗",
+        )
+        if any(phrase in normalized or phrase in compact for phrase in identity_phrases):
+            return "identity"
+
+        capabilities = {
+            "what can you do",
+            "how can you help",
+            "what do you do",
+            "what are your capabilities",
+            "你能干嘛",
+            "你能干啥",
+            "你能做什么",
+            "你可以做什么",
+            "你有什么功能",
+            "怎么使用你",
+        }
+        if normalized in capabilities or compact in capabilities:
+            return "capabilities"
+
+        greetings = {
+            "hello",
+            "hi",
+            "hey",
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "你好",
+            "您好",
+            "嗨",
+            "哈喽",
+            "在吗",
+            "早上好",
+            "下午好",
+            "晚上好",
+        }
+        if normalized in greetings or compact in greetings:
+            return "greeting"
+        return None
 
     @staticmethod
     def _requires_unverifiable_refusal(content: str) -> bool:
