@@ -38,11 +38,14 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 import { api, errorMessage } from '@/api/client';
 import { useAuth } from '@/auth/AuthProvider';
+import { useI18n } from '@/i18n/I18nProvider';
+import LanguageMenu from '@/i18n/LanguageMenu';
 
 const drawerWidth = 232;
 
 const AppShell: React.FC = () => {
   const { user, checking, logout } = useAuth();
+  const { messages } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const compact = useMediaQuery('(max-width:900px)');
@@ -62,8 +65,8 @@ const AppShell: React.FC = () => {
     }
   }, [checking, navigate, user]);
 
-  if (checking) return <LinearProgress aria-label="Checking session" />;
-  if (!user) return <LinearProgress aria-label="Redirecting to sign in" />;
+  if (checking) return <LinearProgress aria-label={messages.app.checkingSession} />;
+  if (!user) return <LinearProgress aria-label={messages.app.redirectingToSignIn} />;
 
   const closePasswordDialog = (): void => {
     if (passwordBusy) return;
@@ -76,7 +79,7 @@ const AppShell: React.FC = () => {
 
   const changePassword = async (): Promise<void> => {
     if (newPassword !== confirmPassword) {
-      setPasswordError('The new passwords do not match.');
+      setPasswordError(messages.shell.passwordsDoNotMatch);
       return;
     }
     setPasswordBusy(true);
@@ -92,26 +95,26 @@ const AppShell: React.FC = () => {
       logout();
       await navigate({ to: '/login' });
     } catch (cause) {
-      setPasswordError(errorMessage(cause));
+      setPasswordError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setPasswordBusy(false);
     }
   };
 
   const adminItems = [
-    { label: 'Overview', path: '/', icon: LayoutDashboard },
-    { label: 'Applications', path: '/applications', icon: AppWindow },
-    { label: 'AI models', path: '/ai', icon: Bot },
-    { label: 'Knowledge', path: '/knowledge', icon: Library },
-    { label: 'Team', path: '/team', icon: Users },
-    { label: 'Operations', path: '/operations', icon: Activity },
+    { label: messages.shell.navigation.overview, path: '/', icon: LayoutDashboard },
+    { label: messages.shell.navigation.applications, path: '/applications', icon: AppWindow },
+    { label: messages.shell.navigation.aiModels, path: '/ai', icon: Bot },
+    { label: messages.shell.navigation.knowledge, path: '/knowledge', icon: Library },
+    { label: messages.shell.navigation.team, path: '/team', icon: Users },
+    { label: messages.shell.navigation.operations, path: '/operations', icon: Activity },
   ];
   const agentItems = [
-    { label: 'Agent workspace', path: '/handoffs', icon: Headphones },
+    { label: messages.shell.navigation.agentWorkspace, path: '/handoffs', icon: Headphones },
   ];
   const platformItems = [
-    { label: 'Platform overview', path: '/', icon: LayoutDashboard },
-    { label: 'Tenants', path: '/platform', icon: Users },
+    { label: messages.shell.navigation.platformOverview, path: '/', icon: LayoutDashboard },
+    { label: messages.shell.navigation.tenants, path: '/platform', icon: Users },
   ];
   const items = user.is_platform_admin && !user.tenant_id
     ? platformItems
@@ -125,7 +128,7 @@ const AppShell: React.FC = () => {
         <Box sx={{ alignItems: 'center', bgcolor: '#d8eee6', borderRadius: 1, color: '#0d6047', display: 'flex', height: 34, justifyContent: 'center', width: 34 }}>
           <Headphones size={19} aria-hidden="true" />
         </Box>
-        <Typography fontWeight={750}>Support Console</Typography>
+        <Typography fontWeight={750}>{messages.app.name}</Typography>
       </Toolbar>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.1)' }} />
       <List sx={{ flex: 1, px: 1, py: 1.5 }}>
@@ -155,14 +158,25 @@ const AppShell: React.FC = () => {
         })}
       </List>
       <Divider sx={{ borderColor: 'rgba(255,255,255,.1)' }} />
+      {!compact && (
+        <Box sx={{ px: 1.5, pt: 1 }}>
+          <LanguageMenu color="inherit" />
+        </Box>
+      )}
       <Box sx={{ alignItems: 'center', display: 'flex', gap: 1, minWidth: 0, p: 1.5 }}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography fontSize={12} noWrap>{user.email}</Typography>
-          <Typography color="#9caaa3" fontSize={11}>{user.role?.replace('_', ' ')}</Typography>
+          <Typography color="#9caaa3" fontSize={11}>
+            {user.is_platform_admin
+              ? messages.shell.roles.platformAdmin
+              : user.role === 'tenant_admin'
+                ? messages.shell.roles.tenantAdmin
+                : messages.shell.roles.agent}
+          </Typography>
         </Box>
-        <Tooltip title="Change password">
+        <Tooltip title={messages.shell.changePassword}>
           <IconButton
-            aria-label="Change password"
+            aria-label={messages.shell.changePassword}
             color="inherit"
             size="small"
             onClick={() => {
@@ -173,8 +187,9 @@ const AppShell: React.FC = () => {
             <KeyRound size={17} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="Sign out">
+        <Tooltip title={messages.shell.signOut}>
           <IconButton
+            aria-label={messages.shell.signOut}
             color="inherit"
             size="small"
             onClick={() => {
@@ -205,49 +220,50 @@ const AppShell: React.FC = () => {
         {compact && (
           <AppBar color="inherit" elevation={0} position="sticky" sx={{ borderBottom: 1, borderColor: 'divider' }}>
             <Toolbar>
-              <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
+              <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label={messages.shell.openNavigation}>
                 <Menu size={21} />
               </IconButton>
-              <Typography fontWeight={700} sx={{ ml: 1 }}>Support Console</Typography>
+              <Typography fontWeight={700} sx={{ ml: 1 }}>{messages.app.name}</Typography>
+              <Box sx={{ ml: 'auto' }}><LanguageMenu compact /></Box>
             </Toolbar>
           </AppBar>
         )}
         <Box sx={{ mx: 'auto', maxWidth: 1440, px: { xs: 2, md: 4 }, py: { xs: 2.5, md: 4 } }}>
-          <Suspense fallback={<LinearProgress aria-label="Loading page" />}>
+          <Suspense fallback={<LinearProgress aria-label={messages.app.loadingPage} />}>
             <Outlet />
           </Suspense>
         </Box>
       </Box>
       </Box>
       <Dialog open={passwordOpen} onClose={closePasswordDialog} fullWidth maxWidth="xs">
-        <DialogTitle>Change password</DialogTitle>
+        <DialogTitle>{messages.shell.changePassword}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
           {passwordError && <Alert severity="error">{passwordError}</Alert>}
           <TextField
             autoComplete="current-password"
-            label="Current password"
+            label={messages.shell.currentPassword}
             type="password"
             value={currentPassword}
             onChange={(event) => setCurrentPassword(event.target.value)}
           />
           <TextField
             autoComplete="new-password"
-            helperText="At least 12 characters"
-            label="New password"
+            helperText={messages.shell.passwordHelp}
+            label={messages.shell.newPassword}
             type="password"
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
           />
           <TextField
             autoComplete="new-password"
-            label="Confirm new password"
+            label={messages.shell.confirmNewPassword}
             type="password"
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={closePasswordDialog} disabled={passwordBusy}>Cancel</Button>
+          <Button onClick={closePasswordDialog} disabled={passwordBusy}>{messages.common.cancel}</Button>
           <Button
             variant="contained"
             disabled={
@@ -258,7 +274,7 @@ const AppShell: React.FC = () => {
             }
             onClick={() => void changePassword()}
           >
-            Change password
+            {messages.shell.changePassword}
           </Button>
         </DialogActions>
       </Dialog>

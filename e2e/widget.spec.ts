@@ -93,3 +93,34 @@ test('help center opens the widget and renders a cited SSE response', async ({ p
     'https://docs.example.test/password',
   );
 });
+
+test('help center persists Simplified Chinese and sends the Widget locale', async ({ page }) => {
+  await mockWidgetApi(page);
+  await page.goto('http://127.0.0.1:5174');
+
+  await page.locator('#language-select').selectOption('zh-CN');
+  await expect(page.getByRole('heading', { name: '需要什么帮助？' })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('ai-support.language')))
+    .toBe('zh-CN');
+
+  await page.getByRole('button', { name: '打开客服' }).click();
+  await expect(page.getByRole('dialog', { name: 'Northstar 客户支持' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible();
+
+  const messageRequest = page.waitForRequest((request) => {
+    const path = new URL(request.url()).pathname;
+    return path.endsWith('/messages') && request.method() === 'POST';
+  });
+  await page.getByRole('textbox', { name: '消息' }).fill('请使用中文回答');
+  await page.getByRole('button', { name: '发送消息' }).click();
+
+  expect((await messageRequest).postDataJSON()).toEqual({
+    content: '请使用中文回答',
+    locale: 'zh-CN',
+  });
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '需要什么帮助？' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开客服' })).toBeVisible();
+});

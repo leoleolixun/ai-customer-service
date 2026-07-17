@@ -6,6 +6,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AIPage from './AIPage';
+import { I18nProvider } from '@/i18n/I18nProvider';
 
 const provider = {
   id: 'provider-1',
@@ -41,6 +42,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 describe('AIPage provider management', () => {
   beforeEach(() => {
+    localStorage.clear();
     mocks.api.mockReset();
     mocks.invalidateQueries.mockReset();
     mocks.api.mockResolvedValue(undefined);
@@ -51,7 +53,7 @@ describe('AIPage provider management', () => {
 
   it('updates the Base URL while keeping the stored API key', async () => {
     const user = userEvent.setup();
-    render(<AIPage />);
+    render(<I18nProvider><AIPage /></I18nProvider>);
 
     await user.click(screen.getByRole('button', { name: 'Edit GLM' }));
     const baseUrl = screen.getByRole('textbox', { name: 'Base URL' });
@@ -70,7 +72,7 @@ describe('AIPage provider management', () => {
 
   it('requires confirmation before deleting a provider', async () => {
     const user = userEvent.setup();
-    render(<AIPage />);
+    render(<I18nProvider><AIPage /></I18nProvider>);
 
     await user.click(screen.getByRole('button', { name: 'Delete GLM' }));
     expect(screen.getByRole('heading', { name: 'Delete provider account?' })).toBeVisible();

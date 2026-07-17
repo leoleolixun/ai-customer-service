@@ -30,8 +30,10 @@ import React, { useCallback, useState } from 'react';
 import { api, errorMessage } from '@/api/client';
 import type { Application, ModelConfig, ProviderAccount } from '@/api/types';
 import PageHeader from '@/components/PageHeader';
+import { useI18n } from '@/i18n/I18nProvider';
 
 const AIPage: React.FC = () => {
+  const { format, labelValue, messages } = useI18n();
   const queryClient = useQueryClient();
   const { data: accounts } = useSuspenseQuery({
     queryKey: ['provider-accounts'],
@@ -91,11 +93,11 @@ const AIPage: React.FC = () => {
       setApiKey('');
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [apiKey, baseUrl, providerKind, providerName, refresh]);
+  }, [apiKey, baseUrl, messages.common.requestFailed, providerKind, providerName, refresh]);
 
   const testProvider = useCallback(async (accountId: string) => {
     setBusy(true);
@@ -104,11 +106,11 @@ const AIPage: React.FC = () => {
       await api(`/v1/admin/ai/provider-accounts/${accountId}/test`, { method: 'POST' });
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [refresh]);
+  }, [messages.common.requestFailed, refresh]);
 
   const openProviderEditor = useCallback((account: ProviderAccount) => {
     setEditingProvider(account);
@@ -136,11 +138,11 @@ const AIPage: React.FC = () => {
       setReplacementApiKey('');
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [editBaseUrl, editProviderName, editingProvider, refresh, replacementApiKey]);
+  }, [editBaseUrl, editProviderName, editingProvider, messages.common.requestFailed, refresh, replacementApiKey]);
 
   const deleteProvider = useCallback(async () => {
     if (!providerToDelete) return;
@@ -153,11 +155,11 @@ const AIPage: React.FC = () => {
       setProviderToDelete(null);
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [providerToDelete, refresh]);
+  }, [messages.common.requestFailed, providerToDelete, refresh]);
 
   const createModel = useCallback(async () => {
     setBusy(true);
@@ -178,11 +180,11 @@ const AIPage: React.FC = () => {
       setRemoteModelName('');
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [dimension, modelName, providerId, purpose, refresh, remoteModelName]);
+  }, [dimension, messages.common.requestFailed, modelName, providerId, purpose, refresh, remoteModelName]);
 
   const activate = useCallback(async () => {
     if (!activateModel || !applicationId) return;
@@ -197,11 +199,11 @@ const AIPage: React.FC = () => {
       setApplicationId('');
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [activateModel, applicationId, refresh]);
+  }, [activateModel, applicationId, messages.common.requestFailed, refresh]);
 
   const deactivate = useCallback(async (model: ModelConfig) => {
     setBusy(true);
@@ -210,42 +212,42 @@ const AIPage: React.FC = () => {
       await api(`/v1/admin/ai/model-configs/${model.id}/deactivate`, { method: 'POST' });
       await refresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [refresh]);
+  }, [messages.common.requestFailed, refresh]);
 
   return (
     <>
-      <PageHeader title="AI models" description="Provider credentials stay encrypted; only tested providers can be used." />
+      <PageHeader title={messages.ai.title} description={messages.ai.description} />
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Box component="section" sx={{ mb: 4 }}>
         <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-          <Typography component="h2" variant="h2">Provider accounts</Typography>
-          <Button startIcon={<Plus size={16} />} onClick={() => setProviderOpen(true)}>Add provider</Button>
+          <Typography component="h2" variant="h2">{messages.ai.providerAccounts}</Typography>
+          <Button startIcon={<Plus size={16} />} onClick={() => setProviderOpen(true)}>{messages.ai.addProvider}</Button>
         </Box>
         <TableContainer component={Paper} variant="outlined">
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Kind</TableCell><TableCell>Endpoint</TableCell><TableCell>Status</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>{messages.common.name}</TableCell><TableCell>{messages.ai.kind}</TableCell><TableCell>{messages.ai.endpoint}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell align="right">{messages.common.action}</TableCell></TableRow></TableHead>
             <TableBody>
               {accounts.map((account) => (
                 <TableRow key={account.id} hover>
                   <TableCell><Typography fontWeight={650}>{account.name}</Typography></TableCell>
-                  <TableCell>{account.kind.replace('_', ' ')}</TableCell>
-                  <TableCell>{account.base_url ?? 'Built-in deterministic provider'}</TableCell>
-                  <TableCell><Chip size="small" color={account.status === 'ready' ? 'success' : 'default'} label={account.status} /></TableCell>
+                  <TableCell>{labelValue(account.kind)}</TableCell>
+                  <TableCell>{account.base_url ?? messages.ai.builtInProvider}</TableCell>
+                  <TableCell><Chip size="small" color={account.status === 'ready' ? 'success' : 'default'} label={labelValue(account.status)} /></TableCell>
                   <TableCell align="right">
                     <Box sx={{ alignItems: 'center', display: 'flex', gap: 0.25, justifyContent: 'flex-end' }}>
-                      <Tooltip title={account.can_manage ? 'Verify provider connection' : 'Managed by the platform administrator'}>
-                        <span><Button size="small" startIcon={<CheckCircle2 size={15} />} disabled={busy || !account.can_manage} onClick={() => void testProvider(account.id)}>Test</Button></span>
+                      <Tooltip title={account.can_manage ? messages.ai.verifyProvider : messages.ai.managedByPlatform}>
+                        <span><Button size="small" startIcon={<CheckCircle2 size={15} />} disabled={busy || !account.can_manage} onClick={() => void testProvider(account.id)}>{messages.ai.test}</Button></span>
                       </Tooltip>
-                      <Tooltip title={account.can_manage ? 'Edit provider' : 'Managed by the platform administrator'}>
-                        <span><IconButton size="small" disabled={busy || !account.can_manage} onClick={() => openProviderEditor(account)} aria-label={`Edit ${account.name}`}><Pencil size={16} /></IconButton></span>
+                      <Tooltip title={account.can_manage ? messages.ai.editProvider : messages.ai.managedByPlatform}>
+                        <span><IconButton size="small" disabled={busy || !account.can_manage} onClick={() => openProviderEditor(account)} aria-label={format(messages.ai.editProviderAria, { name: account.name })}><Pencil size={16} /></IconButton></span>
                       </Tooltip>
-                      <Tooltip title={account.can_manage ? 'Delete provider' : 'Managed by the platform administrator'}>
-                        <span><IconButton size="small" color="error" disabled={busy || !account.can_manage} onClick={() => setProviderToDelete(account)} aria-label={`Delete ${account.name}`}><Trash2 size={16} /></IconButton></span>
+                      <Tooltip title={account.can_manage ? messages.ai.deleteProvider : messages.ai.managedByPlatform}>
+                        <span><IconButton size="small" color="error" disabled={busy || !account.can_manage} onClick={() => setProviderToDelete(account)} aria-label={format(messages.ai.deleteProviderAria, { name: account.name })}><Trash2 size={16} /></IconButton></span>
                       </Tooltip>
                     </Box>
                   </TableCell>
@@ -258,19 +260,19 @@ const AIPage: React.FC = () => {
 
       <Box component="section">
         <Box sx={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', mb: 1.5 }}>
-          <Typography component="h2" variant="h2">Model configurations</Typography>
-          <Button startIcon={<Plus size={16} />} onClick={() => setModelOpen(true)}>Add model</Button>
+          <Typography component="h2" variant="h2">{messages.ai.modelConfigurations}</Typography>
+          <Button startIcon={<Plus size={16} />} onClick={() => setModelOpen(true)}>{messages.ai.addModel}</Button>
         </Box>
         <TableContainer component={Paper} variant="outlined">
           <Table>
-            <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Remote model</TableCell><TableCell>Purpose</TableCell><TableCell>Dimension</TableCell><TableCell>Status</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>{messages.common.name}</TableCell><TableCell>{messages.ai.remoteModel}</TableCell><TableCell>{messages.ai.purpose}</TableCell><TableCell>{messages.ai.dimension}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell align="right">{messages.common.action}</TableCell></TableRow></TableHead>
             <TableBody>
               {models.map((model) => (
                 <TableRow key={model.id} hover>
                   <TableCell><Typography fontWeight={650}>{model.name}</Typography></TableCell>
-                  <TableCell>{model.model_name}</TableCell><TableCell>{model.purpose}</TableCell><TableCell>{model.embedding_dimension ?? '—'}</TableCell>
-                  <TableCell><Chip size="small" color={model.status === 'active' ? 'success' : 'default'} label={model.status} /></TableCell>
-                  <TableCell align="right">{model.purpose === 'chat' && (model.status === 'active' ? <Button size="small" color="error" startIcon={<Power size={15} />} disabled={busy} onClick={() => void deactivate(model)}>Deactivate</Button> : <Button size="small" startIcon={<Power size={15} />} disabled={busy} onClick={() => setActivateModel(model)}>Activate</Button>)}</TableCell>
+                  <TableCell>{model.model_name}</TableCell><TableCell>{labelValue(model.purpose)}</TableCell><TableCell>{model.embedding_dimension ?? '—'}</TableCell>
+                  <TableCell><Chip size="small" color={model.status === 'active' ? 'success' : 'default'} label={labelValue(model.status)} /></TableCell>
+                  <TableCell align="right">{model.purpose === 'chat' && (model.status === 'active' ? <Button size="small" color="error" startIcon={<Power size={15} />} disabled={busy} onClick={() => void deactivate(model)}>{messages.ai.deactivate}</Button> : <Button size="small" startIcon={<Power size={15} />} disabled={busy} onClick={() => setActivateModel(model)}>{messages.ai.activate}</Button>)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -279,47 +281,47 @@ const AIPage: React.FC = () => {
       </Box>
 
       <Dialog open={providerOpen} onClose={() => setProviderOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Add provider account</DialogTitle>
+        <DialogTitle>{messages.ai.addProviderAccount}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <TextField label="Name" value={providerName} onChange={(event) => setProviderName(event.target.value)} required />
-          <FormControl><InputLabel>Provider kind</InputLabel><Select label="Provider kind" value={providerKind} onChange={(event) => setProviderKind(event.target.value as ProviderAccount['kind'])}><MenuItem value="fake">Fake (test only)</MenuItem><MenuItem value="openai_compatible">OpenAI compatible</MenuItem></Select></FormControl>
-          {providerKind === 'openai_compatible' && <><TextField label="Base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" required /><TextField label="API key" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} helperText="Paste the API key only, without Bearer, labels, or quotes." required /></>}
+          <TextField label={messages.common.name} value={providerName} onChange={(event) => setProviderName(event.target.value)} required />
+          <FormControl><InputLabel>{messages.ai.providerKind}</InputLabel><Select label={messages.ai.providerKind} value={providerKind} onChange={(event) => setProviderKind(event.target.value as ProviderAccount['kind'])}><MenuItem value="fake">{messages.ai.fakeTestOnly}</MenuItem><MenuItem value="openai_compatible">{messages.ai.openAICompatible}</MenuItem></Select></FormControl>
+          {providerKind === 'openai_compatible' && <><TextField label={messages.ai.baseUrl} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" required /><TextField label={messages.ai.apiKey} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} helperText={messages.ai.apiKeyHelp} required /></>}
         </DialogContent>
-        <DialogActions><Button onClick={() => setProviderOpen(false)}>Cancel</Button><Button variant="contained" startIcon={<ServerCog size={16} />} disabled={!providerName.trim() || busy} onClick={() => void createProvider()}>Save provider</Button></DialogActions>
+        <DialogActions><Button onClick={() => setProviderOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" startIcon={<ServerCog size={16} />} disabled={!providerName.trim() || busy} onClick={() => void createProvider()}>{messages.ai.saveProvider}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={modelOpen} onClose={() => setModelOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Add model configuration</DialogTitle>
+        <DialogTitle>{messages.ai.addModelConfiguration}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <FormControl><InputLabel>Provider</InputLabel><Select label="Provider" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{accounts.filter((account) => account.status === 'ready').map((account) => <MenuItem key={account.id} value={account.id}>{account.name}</MenuItem>)}</Select></FormControl>
-          <TextField label="Configuration name" value={modelName} onChange={(event) => setModelName(event.target.value)} required />
-          <TextField label="Remote model name" value={remoteModelName} onChange={(event) => setRemoteModelName(event.target.value)} required />
-          <FormControl><InputLabel>Purpose</InputLabel><Select label="Purpose" value={purpose} onChange={(event) => setPurpose(event.target.value as ModelConfig['purpose'])}><MenuItem value="chat">Chat</MenuItem><MenuItem value="embedding">Embedding</MenuItem></Select></FormControl>
-          {purpose === 'embedding' && <TextField label="Embedding dimension" type="number" value={dimension} onChange={(event) => setDimension(event.target.value)} inputProps={{ min: 8, max: 16384 }} />}
+          <FormControl><InputLabel>{messages.ai.provider}</InputLabel><Select label={messages.ai.provider} value={providerId} onChange={(event) => setProviderId(event.target.value)}>{accounts.filter((account) => account.status === 'ready').map((account) => <MenuItem key={account.id} value={account.id}>{account.name}</MenuItem>)}</Select></FormControl>
+          <TextField label={messages.ai.configurationName} value={modelName} onChange={(event) => setModelName(event.target.value)} required />
+          <TextField label={messages.ai.remoteModelName} value={remoteModelName} onChange={(event) => setRemoteModelName(event.target.value)} required />
+          <FormControl><InputLabel>{messages.ai.purpose}</InputLabel><Select label={messages.ai.purpose} value={purpose} onChange={(event) => setPurpose(event.target.value as ModelConfig['purpose'])}><MenuItem value="chat">{messages.ai.chat}</MenuItem><MenuItem value="embedding">{messages.ai.embedding}</MenuItem></Select></FormControl>
+          {purpose === 'embedding' && <TextField label={messages.ai.embeddingDimension} type="number" value={dimension} onChange={(event) => setDimension(event.target.value)} inputProps={{ min: 8, max: 16384 }} />}
         </DialogContent>
-        <DialogActions><Button onClick={() => setModelOpen(false)}>Cancel</Button><Button variant="contained" disabled={!providerId || !modelName.trim() || !remoteModelName.trim() || busy} onClick={() => void createModel()}>Save model</Button></DialogActions>
+        <DialogActions><Button onClick={() => setModelOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!providerId || !modelName.trim() || !remoteModelName.trim() || busy} onClick={() => void createModel()}>{messages.ai.saveModel}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={editingProvider !== null} onClose={() => setEditingProvider(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Edit provider account</DialogTitle>
+        <DialogTitle>{messages.ai.editProviderAccount}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <TextField label="Name" value={editProviderName} onChange={(event) => setEditProviderName(event.target.value)} required />
-          <TextField label="Provider kind" value={editingProvider?.kind.replace('_', ' ') ?? ''} disabled />
-          {editingProvider?.kind === 'openai_compatible' && <><TextField label="Base URL" value={editBaseUrl} onChange={(event) => setEditBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" helperText="Use the API root; do not include /chat/completions." required /><TextField label="Replacement API key" type="password" value={replacementApiKey} onChange={(event) => setReplacementApiKey(event.target.value)} helperText="Leave blank to keep the current key. Paste the API key only, without Bearer or labels." /></>}
+          <TextField label={messages.common.name} value={editProviderName} onChange={(event) => setEditProviderName(event.target.value)} required />
+          <TextField label={messages.ai.providerKind} value={editingProvider?.kind === 'fake' ? messages.ai.fakeTestOnly : messages.ai.openAICompatible} disabled />
+          {editingProvider?.kind === 'openai_compatible' && <><TextField label={messages.ai.baseUrl} value={editBaseUrl} onChange={(event) => setEditBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" helperText={messages.ai.apiRootHelp} required /><TextField label={messages.ai.replacementApiKey} type="password" value={replacementApiKey} onChange={(event) => setReplacementApiKey(event.target.value)} helperText={messages.ai.replacementApiKeyHelp} /></>}
         </DialogContent>
-        <DialogActions><Button onClick={() => setEditingProvider(null)}>Cancel</Button><Button variant="contained" startIcon={<ServerCog size={16} />} disabled={!editProviderName.trim() || (editingProvider?.kind === 'openai_compatible' && !editBaseUrl.trim()) || busy} onClick={() => void updateProvider()}>Save changes</Button></DialogActions>
+        <DialogActions><Button onClick={() => setEditingProvider(null)}>{messages.common.cancel}</Button><Button variant="contained" startIcon={<ServerCog size={16} />} disabled={!editProviderName.trim() || (editingProvider?.kind === 'openai_compatible' && !editBaseUrl.trim()) || busy} onClick={() => void updateProvider()}>{messages.ai.saveChanges}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={providerToDelete !== null} onClose={() => setProviderToDelete(null)} fullWidth maxWidth="xs">
-        <DialogTitle>Delete provider account?</DialogTitle>
-        <DialogContent sx={{ pt: '8px !important' }}><Typography color="text.secondary">{providerToDelete?.name} can only be deleted when no model configuration uses it.</Typography></DialogContent>
-        <DialogActions><Button onClick={() => setProviderToDelete(null)}>Cancel</Button><Button color="error" variant="contained" startIcon={<Trash2 size={16} />} disabled={busy} onClick={() => void deleteProvider()}>Delete provider</Button></DialogActions>
+        <DialogTitle>{messages.ai.deleteProviderTitle}</DialogTitle>
+        <DialogContent sx={{ pt: '8px !important' }}><Typography color="text.secondary">{format(messages.ai.deleteProviderDescription, { name: providerToDelete?.name ?? '' })}</Typography></DialogContent>
+        <DialogActions><Button onClick={() => setProviderToDelete(null)}>{messages.common.cancel}</Button><Button color="error" variant="contained" startIcon={<Trash2 size={16} />} disabled={busy} onClick={() => void deleteProvider()}>{messages.ai.deleteProvider}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={activateModel !== null} onClose={() => setActivateModel(null)} fullWidth maxWidth="xs">
-        <DialogTitle>Activate chat model</DialogTitle>
-        <DialogContent sx={{ pt: '8px !important' }}><FormControl fullWidth><InputLabel>Application</InputLabel><Select label="Application" value={applicationId} onChange={(event) => setApplicationId(event.target.value)}>{applications.filter((application) => application.status === 'active').map((application) => <MenuItem key={application.id} value={application.id}>{application.name}</MenuItem>)}</Select></FormControl></DialogContent>
-        <DialogActions><Button onClick={() => setActivateModel(null)}>Cancel</Button><Button variant="contained" disabled={!applicationId || busy} onClick={() => void activate()}>Activate</Button></DialogActions>
+        <DialogTitle>{messages.ai.activateChatModel}</DialogTitle>
+        <DialogContent sx={{ pt: '8px !important' }}><FormControl fullWidth><InputLabel>{messages.common.application}</InputLabel><Select label={messages.common.application} value={applicationId} onChange={(event) => setApplicationId(event.target.value)}>{applications.filter((application) => application.status === 'active').map((application) => <MenuItem key={application.id} value={application.id}>{application.name}</MenuItem>)}</Select></FormControl></DialogContent>
+        <DialogActions><Button onClick={() => setActivateModel(null)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!applicationId || busy} onClick={() => void activate()}>{messages.ai.activate}</Button></DialogActions>
       </Dialog>
     </>
   );

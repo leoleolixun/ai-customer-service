@@ -19,6 +19,7 @@
 }
 
 button,
+select,
 textarea {
   font: inherit;
   letter-spacing: 0;
@@ -53,6 +54,7 @@ textarea {
 .send-button:focus-visible,
 .handoff-button:focus-visible,
 .citation-link:focus-visible,
+.language-select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid rgb(20 122 91 / 28%);
   outline-offset: 2px;
@@ -78,8 +80,9 @@ textarea:focus-visible {
   align-items: center;
   background: #18241f;
   color: #fff;
-  display: flex;
+  display: grid;
   gap: 12px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   min-width: 0;
   padding: 12px 14px;
 }
@@ -118,6 +121,44 @@ textarea:focus-visible {
   margin-top: 3px;
 }
 
+.header-actions {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.language-control {
+  display: flex;
+}
+
+.language-select {
+  appearance: auto;
+  background: rgb(255 255 255 / 8%);
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  height: 32px;
+  padding: 0 3px;
+  width: 58px;
+}
+
+.language-select option {
+  color: #17211d;
+}
+
+.visually-hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 .icon-button {
   align-items: center;
   background: transparent;
@@ -128,7 +169,6 @@ textarea:focus-visible {
   display: flex;
   height: 34px;
   justify-content: center;
-  margin-left: auto;
   width: 34px;
 }
 
@@ -356,6 +396,18 @@ textarea {
   .launcher {
     bottom: 16px;
     right: 16px;
+  }
+}
+
+@media (max-width: 340px) {
+  .header {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 10px;
+  }
+
+  .brand-mark {
+    display: none;
   }
 }
 

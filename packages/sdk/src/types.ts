@@ -4,6 +4,7 @@ export type MessageSender = 'user' | 'ai' | 'agent' | 'system';
 export type MessageStatus = 'generating' | 'completed' | 'failed';
 export type HandoffStatus = 'pending' | 'accepted' | 'closed' | 'cancelled';
 export type FeedbackRating = 'helpful' | 'unhelpful';
+export type SupportedLocale = 'en' | 'zh-CN';
 
 export interface Conversation {
   id: string;

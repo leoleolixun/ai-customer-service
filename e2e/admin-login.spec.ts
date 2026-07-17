@@ -1,5 +1,22 @@
 import { expect, test } from '@playwright/test';
 
+test('admin console persists the selected Simplified Chinese language', async ({ page }) => {
+  await page.goto('http://127.0.0.1:5173/login');
+
+  await page.getByRole('button', { name: 'Change language' }).click();
+  await page.getByRole('menuitem', { name: '简体中文' }).click();
+
+  await expect(page.getByRole('heading', { name: '客服管理后台' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '登录' })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('ai-support.language')))
+    .toBe('zh-CN');
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '客服管理后台' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '邮箱' })).toBeVisible();
+});
+
 test('staff can sign in and reach the tenant overview', async ({ page }) => {
   await page.route('**/v1/**', async (route) => {
     const request = route.request();

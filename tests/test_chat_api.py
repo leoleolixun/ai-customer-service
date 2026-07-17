@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.security import hash_password
 from app.domains.conversations.models import Message, MessageSender
+from app.domains.conversations.schemas import ConversationLocale
 from app.domains.conversations.service import HUMAN_REQUIRED_RESPONSE, ConversationService
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
 from app.domains.knowledge.models import KnowledgeChunk, KnowledgeDocument
@@ -87,6 +88,14 @@ def test_chat_history_keeps_latest_messages_within_character_budget() -> None:
     assert [message.role for message in history] == ["assistant", "user"]
     assert history[-1].content == "latest" * 1_000
     assert sum(len(message.content) for message in history) <= 20_000
+
+
+def test_grounding_prompt_instructs_the_selected_response_language() -> None:
+    english = ConversationService._grounding_prompt([], locale=ConversationLocale.EN)
+    chinese = ConversationService._grounding_prompt([], locale=ConversationLocale.ZH_CN)
+
+    assert "Respond in English" in english
+    assert "Respond in Simplified Chinese" in chinese
 
 
 async def setup_chat_application(
@@ -241,6 +250,33 @@ async def test_chat_sse_idempotency_and_user_isolation(
     assert len(model_calls.json()) == 1
     assert model_calls.json()[0]["model_name"] == "fake-chat"
     assert model_calls.json()[0]["conversation_id"] == conversation_id
+
+
+async def test_chat_returns_localized_rule_based_refusal(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    setup = await setup_chat_application(client, session_factory)
+    token = await issue_customer_token(client, setup["api_key"], "zh-customer")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post("/v1/chat/sessions", headers=headers, json={})
+    assert created.status_code == 201, created.text
+
+    streamed = await client.post(
+        f"/v1/chat/sessions/{created.json()['id']}/messages",
+        headers=headers,
+        json={"content": "下个月会发布什么新功能？", "locale": "zh-CN"},  # noqa: RUF001
+    )
+
+    assert streamed.status_code == 200, streamed.text
+    assert "我没有足够的已验证信息" in streamed.text
+
+    invalid = await client.post(
+        f"/v1/chat/sessions/{created.json()['id']}/messages",
+        headers=headers,
+        json={"content": "测试", "locale": "fr"},
+    )
+    assert invalid.status_code == 422
 
 
 async def test_chat_uses_only_bound_knowledge_and_returns_citations(

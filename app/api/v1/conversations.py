@@ -126,6 +126,7 @@ async def stream_message(
         principal=principal,
         conversation_id=conversation_id,
         content=body.content,
+        locale=body.locale,
         idempotency_key=idempotency_key,
     )
     return StreamingResponse(

@@ -26,6 +26,7 @@ import React, { useCallback, useState } from 'react';
 import { api, errorMessage } from '@/api/client';
 import type { ApiCredential, Application } from '@/api/types';
 import PageHeader from '@/components/PageHeader';
+import { useI18n } from '@/i18n/I18nProvider';
 
 interface CredentialCreated {
   id: string;
@@ -35,6 +36,7 @@ interface CredentialCreated {
 }
 
 const ApplicationsPage: React.FC = () => {
+  const { format, labelValue, language, messages } = useI18n();
   const queryClient = useQueryClient();
   const { data } = useSuspenseQuery({
     queryKey: ['applications'],
@@ -72,7 +74,7 @@ const ApplicationsPage: React.FC = () => {
       setOrigins('');
       await queryClient.invalidateQueries({ queryKey: ['applications'] });
     },
-    onError: (cause) => setError(errorMessage(cause)),
+    onError: (cause) => setError(errorMessage(cause, messages.common.requestFailed)),
   });
 
   const createCredential = useCallback(async (applicationId: string) => {
@@ -86,9 +88,9 @@ const ApplicationsPage: React.FC = () => {
         queryKey: ['application-credentials', applicationId],
       });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     }
-  }, [queryClient]);
+  }, [messages.common.requestFailed, queryClient]);
 
   const revokeCredential = useCallback(async (credentialId: string) => {
     if (!credentialApplication) return;
@@ -102,9 +104,9 @@ const ApplicationsPage: React.FC = () => {
         queryKey: ['application-credentials', credentialApplication.id],
       });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     }
-  }, [credentialApplication, queryClient]);
+  }, [credentialApplication, messages.common.requestFailed, queryClient]);
 
   const toggleApplication = useCallback(async (application: Application) => {
     setError(null);
@@ -115,9 +117,9 @@ const ApplicationsPage: React.FC = () => {
       });
       await queryClient.invalidateQueries({ queryKey: ['applications'] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     }
-  }, [queryClient]);
+  }, [messages.common.requestFailed, queryClient]);
 
   const openEdit = useCallback((application: Application) => {
     setEditing(application);
@@ -142,28 +144,28 @@ const ApplicationsPage: React.FC = () => {
       setEditing(null);
       await queryClient.invalidateQueries({ queryKey: ['applications'] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     }
-  }, [editName, editOrigins, editRateLimit, editing, queryClient]);
+  }, [editName, editOrigins, editRateLimit, editing, messages.common.requestFailed, queryClient]);
 
   return (
     <>
       <PageHeader
-        title="Applications"
-        description="Public integration identities, origins, limits, and server credentials."
-        action={{ label: 'New application', icon: Plus, onClick: () => setCreateOpen(true) }}
+        title={messages.applications.title}
+        description={messages.applications.description}
+        action={{ label: messages.applications.newApplication, icon: Plus, onClick: () => setCreateOpen(true) }}
       />
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <TableContainer component={Paper} variant="outlined">
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Public key</TableCell>
-              <TableCell>Allowed origins</TableCell>
-              <TableCell>Rate limit</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell align="right">Actions</TableCell>
+              <TableCell>{messages.common.name}</TableCell>
+              <TableCell>{messages.applications.publicKey}</TableCell>
+              <TableCell>{messages.applications.allowedOrigins}</TableCell>
+              <TableCell>{messages.applications.rateLimit}</TableCell>
+              <TableCell>{messages.common.status}</TableCell>
+              <TableCell align="right">{messages.common.actions}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -171,18 +173,18 @@ const ApplicationsPage: React.FC = () => {
               <TableRow key={application.id} hover>
                 <TableCell><Typography fontWeight={650}>{application.name}</Typography></TableCell>
                 <TableCell><Typography component="code" fontSize={12}>{application.public_key}</Typography></TableCell>
-                <TableCell>{application.allowed_origins.length ? application.allowed_origins.join(', ') : 'None'}</TableCell>
-                <TableCell>{application.rate_limit_per_minute}/min</TableCell>
-                <TableCell><Chip size="small" color={application.status === 'active' ? 'success' : 'default'} label={application.status} /></TableCell>
+                <TableCell>{application.allowed_origins.length ? application.allowed_origins.join(', ') : messages.common.none}</TableCell>
+                <TableCell>{format(messages.applications.perMinute, { count: application.rate_limit_per_minute })}</TableCell>
+                <TableCell><Chip size="small" color={application.status === 'active' ? 'success' : 'default'} label={labelValue(application.status)} /></TableCell>
                 <TableCell align="right">
-                  <Tooltip title="Edit application">
-                    <IconButton aria-label={`Edit ${application.name}`} onClick={() => openEdit(application)}><Pencil size={17} /></IconButton>
+                  <Tooltip title={messages.applications.editApplication}>
+                    <IconButton aria-label={format(messages.applications.editApplicationAria, { name: application.name })} onClick={() => openEdit(application)}><Pencil size={17} /></IconButton>
                   </Tooltip>
-                  <Tooltip title="Create server credential">
-                    <IconButton onClick={() => setCredentialApplication(application)}><KeyRound size={17} /></IconButton>
+                  <Tooltip title={messages.applications.createServerCredential}>
+                    <IconButton aria-label={messages.applications.createServerCredential} onClick={() => setCredentialApplication(application)}><KeyRound size={17} /></IconButton>
                   </Tooltip>
-                  <Tooltip title={application.status === 'active' ? 'Disable application' : 'Enable application'}>
-                    <IconButton onClick={() => void toggleApplication(application)}><Power size={17} /></IconButton>
+                  <Tooltip title={application.status === 'active' ? messages.applications.disableApplication : messages.applications.enableApplication}>
+                    <IconButton aria-label={application.status === 'active' ? messages.applications.disableApplication : messages.applications.enableApplication} onClick={() => void toggleApplication(application)}><Power size={17} /></IconButton>
                   </Tooltip>
                 </TableCell>
               </TableRow>
@@ -192,14 +194,14 @@ const ApplicationsPage: React.FC = () => {
       </TableContainer>
 
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>New application</DialogTitle>
+        <DialogTitle>{messages.applications.newApplication}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} required />
-          <TextField label="Allowed origins" value={origins} onChange={(event) => setOrigins(event.target.value)} multiline minRows={3} placeholder="https://example.com" helperText="One exact HTTP(S) origin per line" />
+          <TextField label={messages.common.name} value={name} onChange={(event) => setName(event.target.value)} required />
+          <TextField label={messages.applications.allowedOrigins} value={origins} onChange={(event) => setOrigins(event.target.value)} multiline minRows={3} placeholder={messages.applications.originsPlaceholder} helperText={messages.applications.originsHelp} />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCreateOpen(false)}>Cancel</Button>
-          <Button variant="contained" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>Create</Button>
+          <Button onClick={() => setCreateOpen(false)}>{messages.common.cancel}</Button>
+          <Button variant="contained" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{messages.common.create}</Button>
         </DialogActions>
       </Dialog>
 
@@ -209,20 +211,20 @@ const ApplicationsPage: React.FC = () => {
         fullWidth
         maxWidth="md"
       >
-        <DialogTitle>Server credentials · {credentialApplication?.name}</DialogTitle>
+        <DialogTitle>{format(messages.applications.serverCredentialsTitle, { name: credentialApplication?.name ?? '' })}</DialogTitle>
         <DialogContent>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Secrets are shown only at creation. Existing credentials are identified by prefix.
+            {messages.applications.secretsInfo}
           </Alert>
           <TableContainer variant="outlined" component={Paper}>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Prefix</TableCell>
-                  <TableCell>Scopes</TableCell>
-                  <TableCell>Created</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell align="right">Action</TableCell>
+                  <TableCell>{messages.applications.prefix}</TableCell>
+                  <TableCell>{messages.applications.scopes}</TableCell>
+                  <TableCell>{messages.common.created}</TableCell>
+                  <TableCell>{messages.common.status}</TableCell>
+                  <TableCell align="right">{messages.common.action}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -230,19 +232,19 @@ const ApplicationsPage: React.FC = () => {
                   <TableRow key={item.id}>
                     <TableCell><Typography component="code" fontSize={12}>{item.key_prefix}</Typography></TableCell>
                     <TableCell>{item.scopes.join(', ')}</TableCell>
-                    <TableCell>{new Date(item.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell>{new Date(item.created_at).toLocaleDateString(language)}</TableCell>
                     <TableCell>
                       <Chip
                         size="small"
                         color={item.revoked_at ? 'default' : 'success'}
-                        label={item.revoked_at ? 'revoked' : 'active'}
+                        label={labelValue(item.revoked_at ? 'revoked' : 'active')}
                       />
                     </TableCell>
                     <TableCell align="right">
-                      <Tooltip title={item.revoked_at ? 'Credential already revoked' : 'Revoke credential'}>
+                      <Tooltip title={item.revoked_at ? messages.applications.credentialAlreadyRevoked : messages.applications.revokeCredential}>
                         <span>
                           <IconButton
-                            aria-label={`Revoke credential ${item.key_prefix}`}
+                            aria-label={format(messages.applications.revokeCredentialAria, { prefix: item.key_prefix })}
                             color="error"
                             disabled={item.revoked_at !== null}
                             onClick={() => void revokeCredential(item.id)}
@@ -255,46 +257,46 @@ const ApplicationsPage: React.FC = () => {
                   </TableRow>
                 ))}
                 {!credentialsLoading && credentials.length === 0 && (
-                  <TableRow><TableCell colSpan={5}>No server credentials created.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={5}>{messages.applications.noCredentials}</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
           </TableContainer>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCredentialApplication(null)}>Close</Button>
+          <Button onClick={() => setCredentialApplication(null)}>{messages.common.close}</Button>
           <Button
             variant="contained"
             startIcon={<Plus size={16} />}
             onClick={() => credentialApplication && void createCredential(credentialApplication.id)}
           >
-            Create credential
+            {messages.applications.createCredential}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={editing !== null} onClose={() => setEditing(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Edit application</DialogTitle>
+        <DialogTitle>{messages.applications.editApplication}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <TextField label="Name" value={editName} onChange={(event) => setEditName(event.target.value)} required />
-          <TextField label="Allowed origins" value={editOrigins} onChange={(event) => setEditOrigins(event.target.value)} multiline minRows={3} placeholder="https://example.com" helperText="One exact HTTP(S) origin per line" />
-          <TextField label="Customer write requests per minute" type="number" value={editRateLimit} onChange={(event) => setEditRateLimit(event.target.value)} inputProps={{ min: 1, max: 10000 }} />
+          <TextField label={messages.common.name} value={editName} onChange={(event) => setEditName(event.target.value)} required />
+          <TextField label={messages.applications.allowedOrigins} value={editOrigins} onChange={(event) => setEditOrigins(event.target.value)} multiline minRows={3} placeholder={messages.applications.originsPlaceholder} helperText={messages.applications.originsHelp} />
+          <TextField label={messages.applications.customerWritesPerMinute} type="number" value={editRateLimit} onChange={(event) => setEditRateLimit(event.target.value)} inputProps={{ min: 1, max: 10000 }} />
         </DialogContent>
-        <DialogActions><Button onClick={() => setEditing(null)}>Cancel</Button><Button variant="contained" disabled={!editName.trim() || Number(editRateLimit) < 1 || Number(editRateLimit) > 10000} onClick={() => void saveEdit()}>Save</Button></DialogActions>
+        <DialogActions><Button onClick={() => setEditing(null)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!editName.trim() || Number(editRateLimit) < 1 || Number(editRateLimit) > 10000} onClick={() => void saveEdit()}>{messages.common.save}</Button></DialogActions>
       </Dialog>
 
       <Dialog open={credential !== null} onClose={() => setCredential(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Server credential</DialogTitle>
+        <DialogTitle>{messages.applications.serverCredential}</DialogTitle>
         <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>This credential is shown once. Store it only in the integrating server.</Alert>
+          <Alert severity="warning" sx={{ mb: 2 }}>{messages.applications.credentialWarning}</Alert>
           <Box sx={{ alignItems: 'center', bgcolor: 'grey.100', border: 1, borderColor: 'divider', borderRadius: 1, display: 'flex', gap: 1, p: 1.5 }}>
             <Typography component="code" fontSize={12} sx={{ flex: 1, overflowWrap: 'anywhere' }}>{credential?.api_key}</Typography>
-            <Tooltip title="Copy credential">
-              <IconButton onClick={() => void navigator.clipboard.writeText(credential?.api_key ?? '')}><Copy size={17} /></IconButton>
+            <Tooltip title={messages.applications.copyCredential}>
+              <IconButton aria-label={messages.applications.copyCredential} onClick={() => void navigator.clipboard.writeText(credential?.api_key ?? '')}><Copy size={17} /></IconButton>
             </Tooltip>
           </Box>
         </DialogContent>
-        <DialogActions><Button variant="contained" onClick={() => setCredential(null)}>Done</Button></DialogActions>
+        <DialogActions><Button variant="contained" onClick={() => setCredential(null)}>{messages.common.done}</Button></DialogActions>
       </Dialog>
     </>
   );

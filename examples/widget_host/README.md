@@ -31,6 +31,7 @@ customer application's own backend:
   base-url="https://support.example.com"
   application-id="storefront-web"
   session-key="current-user-id"
+  language="zh-CN"
 ></ai-support-widget>
 <script src="https://support.example.com/widget/ai-support-widget.js"></script>
 <script>
@@ -41,6 +42,10 @@ customer application's own backend:
   };
 </script>
 ```
+
+`language` 支持 `en` 和 `zh-CN`。省略时 Widget 优先使用浏览器已经保存的语言，其次根据浏览器语言选择；
+用户也可以在 Widget 内切换。选择会写入 `localStorage` 的 `ai-support.language`，并随消息请求传给平台，
+使规则回复和模型回答使用相同语言。也可以通过脚本标签的 `data-language="zh-CN"` 设置初始语言。
 
 The inline example is intentionally small. Production sites with a strict Content Security Policy
 should move the initialization into an allowed external JavaScript file. The platform API key must

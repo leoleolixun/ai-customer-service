@@ -9,7 +9,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   SupportApiError,
@@ -19,14 +19,27 @@ import {
   type Message,
 } from '@ai-support/sdk';
 
-interface WidgetProps {
+import {
+  getWidgetTranslations,
+  parseWidgetLanguage,
+  persistWidgetLanguage,
+  resolveWidgetLanguage,
+  type WidgetLanguage,
+  type WidgetTranslations,
+} from './i18n';
+
+export interface WidgetProps {
   baseUrl: string;
   applicationId: string;
   getToken: () => string | Promise<string>;
   sessionKey?: string;
-  title: string;
-  welcome: string;
+  title?: string;
+  welcome?: string;
+  language?: WidgetLanguage;
+  onLanguageChange?: (language: WidgetLanguage) => void;
 }
+
+const HANDOFF_REASON = 'customer_requested_handoff';
 
 const Widget: React.FC<WidgetProps> = ({
   baseUrl,
@@ -35,20 +48,49 @@ const Widget: React.FC<WidgetProps> = ({
   sessionKey,
   title,
   welcome,
+  language,
+  onLanguageChange,
 }) => {
+  const [activeLanguage, setActiveLanguage] = useState<WidgetLanguage>(() =>
+    resolveWidgetLanguage(language),
+  );
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown | null>(null);
   const [feedback, setFeedback] = useState<Record<string, FeedbackRating>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
-  const client = useMemo(() => new SupportClient({ baseUrl, getToken }), [baseUrl, getToken]);
+  const activeLanguageRef = useRef(activeLanguage);
+  const client = useMemo(
+    () => new SupportClient({
+      baseUrl,
+      getToken,
+      getLocale: () => activeLanguageRef.current,
+    }),
+    [baseUrl, getToken],
+  );
+  const translations = getWidgetTranslations(activeLanguage);
+  const displayTitle = title ?? translations.defaultTitle;
+  const displayWelcome = welcome ?? translations.defaultWelcome;
   const storageKey = sessionKey
     ? `ai-support:${baseUrl}:${applicationId}:${sessionKey}:conversation`
     : null;
+
+  useLayoutEffect(() => {
+    const nextLanguage = resolveWidgetLanguage(language);
+    activeLanguageRef.current = nextLanguage;
+    setActiveLanguage(nextLanguage);
+  }, [language]);
+
+  const changeLanguage = useCallback((nextLanguage: WidgetLanguage) => {
+    activeLanguageRef.current = nextLanguage;
+    setActiveLanguage(nextLanguage);
+    persistWidgetLanguage(nextLanguage);
+    onLanguageChange?.(nextLanguage);
+  }, [onLanguageChange]);
 
   const initialize = useCallback(async () => {
     if (conversationId) return;
@@ -78,7 +120,7 @@ const Widget: React.FC<WidgetProps> = ({
         if (!(cause instanceof SupportApiError) || cause.status !== 404) throw cause;
       }
     } catch (cause) {
-      setError(messageFromError(cause));
+      setError(cause);
     } finally {
       setBusy(false);
     }
@@ -189,7 +231,7 @@ const Widget: React.FC<WidgetProps> = ({
         }
       }
     } catch (cause) {
-      setError(messageFromError(cause));
+      setError(cause);
       setMessages(await client.listMessages(conversationId).catch(() => []));
     } finally {
       setBusy(false);
@@ -201,9 +243,9 @@ const Widget: React.FC<WidgetProps> = ({
     setBusy(true);
     setError(null);
     try {
-      setHandoff(await client.requestHandoff(conversationId, 'Customer requested human support'));
+      setHandoff(await client.requestHandoff(conversationId, HANDOFF_REASON));
     } catch (cause) {
-      setError(messageFromError(cause));
+      setError(cause);
     } finally {
       setBusy(false);
     }
@@ -216,7 +258,7 @@ const Widget: React.FC<WidgetProps> = ({
       await client.submitFeedback(conversationId, messageId, rating);
       setFeedback((current) => ({ ...current, [messageId]: rating }));
     } catch (cause) {
-      setError(messageFromError(cause));
+      setError(cause);
     }
   }, [client, conversationId]);
 
@@ -233,45 +275,77 @@ const Widget: React.FC<WidgetProps> = ({
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (cause) {
-      setError(messageFromError(cause));
+      setError(cause);
     }
   }, [client, conversationId]);
 
   if (!open) {
     return (
-      <button className="launcher" onClick={() => setOpen(true)} aria-label="Open support">
+      <button
+        className="launcher"
+        onClick={() => setOpen(true)}
+        aria-label={translations.openSupport}
+        lang={activeLanguage}
+      >
         <MessageCircle size={24} aria-hidden="true" />
       </button>
     );
   }
 
   return (
-    <section className="panel" role="dialog" aria-label={title} aria-modal="false">
+    <section
+      className="panel"
+      role="dialog"
+      aria-label={displayTitle}
+      aria-modal="false"
+      lang={activeLanguage}
+    >
       <header className="header">
         <span className="brand-mark"><Bot size={22} aria-hidden="true" /></span>
         <span className="header-copy">
-          <strong>{title}</strong>
-          <span>{handoffLabel(handoff)}</span>
+          <strong>{displayTitle}</strong>
+          <span>{handoffLabel(handoff, translations)}</span>
         </span>
-        <button className="icon-button" onClick={() => setOpen(false)} aria-label="Close support">
-          <X size={20} aria-hidden="true" />
-        </button>
+        <span className="header-actions">
+          <label className="language-control">
+            <span className="visually-hidden">{translations.languageSelector}</span>
+            <select
+              className="language-select"
+              value={activeLanguage}
+              aria-label={translations.languageSelector}
+              onChange={(event) => {
+                const nextLanguage = parseWidgetLanguage(event.target.value);
+                if (nextLanguage) changeLanguage(nextLanguage);
+              }}
+            >
+              <option value="en">EN</option>
+              <option value="zh-CN">中文</option>
+            </select>
+          </label>
+          <button
+            className="icon-button"
+            onClick={() => setOpen(false)}
+            aria-label={translations.closeSupport}
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        </span>
       </header>
 
       <div className="messages" aria-live="polite" ref={messagesRef}>
         {messages.length === 0 && (
           <div className="welcome">
             <MessageCircle size={28} aria-hidden="true" />
-            {busy ? 'Connecting to support…' : welcome}
+            {busy ? translations.connecting : displayWelcome}
           </div>
         )}
         {messages.map((message) => (
           <article className={`message-row ${message.sender}`} key={message.id}>
-            <span className="message-label">{senderLabel(message.sender)}</span>
+            <span className="message-label">{senderLabel(message.sender, translations)}</span>
             <div className="bubble">
               {message.content || '…'}
               {message.citations.length > 0 && (
-                <div className="citations" aria-label="Sources">
+                <div className="citations" aria-label={translations.sources}>
                   {message.citations.map((citation) =>
                     citation.source_url ? (
                       <a
@@ -300,22 +374,22 @@ const Widget: React.FC<WidgetProps> = ({
               )}
             </div>
             {['ai', 'agent'].includes(message.sender) && message.status === 'completed' && (
-              <div className="feedback-actions" aria-label="Rate this reply">
+              <div className="feedback-actions" aria-label={translations.rateReply}>
                 <button
                   className={feedback[message.id] === 'helpful' ? 'selected' : ''}
-                  aria-label="Mark reply as helpful"
+                  aria-label={translations.markHelpful}
                   onClick={() => void rateMessage(message.id, 'helpful')}
                 >
                   <ThumbsUp size={13} aria-hidden="true" />
                 </button>
                 <button
                   className={feedback[message.id] === 'unhelpful' ? 'selected' : ''}
-                  aria-label="Mark reply as unhelpful"
+                  aria-label={translations.markUnhelpful}
                   onClick={() => void rateMessage(message.id, 'unhelpful')}
                 >
                   <ThumbsDown size={13} aria-hidden="true" />
                 </button>
-                {feedback[message.id] && <span>Feedback saved</span>}
+                {feedback[message.id] && <span>{translations.feedbackSaved}</span>}
               </div>
             )}
           </article>
@@ -326,11 +400,15 @@ const Widget: React.FC<WidgetProps> = ({
         {handoff && ['pending', 'accepted'].includes(handoff.status) && (
           <div className="status-strip">
             <Headphones size={15} aria-hidden="true" />
-            {handoff.status === 'pending' ? 'Waiting for an agent' : 'An agent has joined'}
+            {handoff.status === 'pending'
+              ? translations.waitingAgent
+              : translations.agentJoined}
           </div>
         )}
         <div className="composer">
-          {error && <div className="error" role="alert">{error}</div>}
+          {error !== null && (
+            <div className="error" role="alert">{messageFromError(error, translations)}</div>
+          )}
           <div className="composer-row">
             <textarea
               value={draft}
@@ -341,16 +419,16 @@ const Widget: React.FC<WidgetProps> = ({
                   void send();
                 }
               }}
-              placeholder="Write a message"
+              placeholder={translations.messagePlaceholder}
               rows={1}
               disabled={handoff?.status === 'closed'}
-              aria-label="Message"
+              aria-label={translations.message}
             />
             <button
               className="send-button"
               onClick={() => void send()}
               disabled={!draft.trim() || busy || handoff?.status === 'closed'}
-              aria-label="Send message"
+              aria-label={translations.sendMessage}
             >
               <Send size={18} aria-hidden="true" />
             </button>
@@ -358,7 +436,7 @@ const Widget: React.FC<WidgetProps> = ({
           {!handoff && (
             <button className="handoff-button" onClick={() => void requestHuman()} disabled={busy}>
               <UserRound size={14} aria-hidden="true" />
-              Contact an agent
+              {translations.contactAgent}
             </button>
           )}
         </div>
@@ -367,20 +445,25 @@ const Widget: React.FC<WidgetProps> = ({
   );
 };
 
-function senderLabel(sender: Message['sender']): string {
-  return { user: 'You', ai: 'AI support', agent: 'Support agent', system: 'System' }[sender];
+function senderLabel(sender: Message['sender'], translations: WidgetTranslations): string {
+  return {
+    user: translations.senderUser,
+    ai: translations.senderAI,
+    agent: translations.senderAgent,
+    system: translations.senderSystem,
+  }[sender];
 }
 
-function handoffLabel(handoff: Handoff | null): string {
-  if (handoff?.status === 'pending') return 'Waiting for an agent';
-  if (handoff?.status === 'accepted') return 'Agent online';
-  if (handoff?.status === 'closed') return 'Conversation closed';
-  return 'AI support';
+function handoffLabel(handoff: Handoff | null, translations: WidgetTranslations): string {
+  if (handoff?.status === 'pending') return translations.waitingAgent;
+  if (handoff?.status === 'accepted') return translations.agentOnline;
+  if (handoff?.status === 'closed') return translations.conversationClosed;
+  return translations.aiSupport;
 }
 
-function messageFromError(cause: unknown): string {
+function messageFromError(cause: unknown, translations: WidgetTranslations): string {
   if (cause instanceof SupportApiError) return cause.message;
-  return 'Support is temporarily unavailable. Please try again later.';
+  return translations.fallbackError;
 }
 
 export default Widget;

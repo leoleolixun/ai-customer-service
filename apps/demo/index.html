@@ -9,73 +9,133 @@
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Northstar Help Center home">
+      <a
+        class="brand"
+        href="/"
+        aria-label="Northstar Help Center home"
+        data-i18n-aria-label="brand.homeLabel"
+      >
         <span class="brand-mark" data-lucide="compass"></span>
-        <span>Northstar <strong>Help Center</strong></span>
+        <span>Northstar <strong data-i18n="brand.helpCenter">Help Center</strong></span>
       </a>
-      <nav aria-label="Help center navigation">
-        <a href="#guides">Guides</a>
-        <a href="#status">Service status</a>
-      </nav>
+      <div class="topbar-actions">
+        <nav aria-label="Help center navigation" data-i18n-aria-label="navigation.label">
+          <a href="#guides" data-i18n="navigation.guides">Guides</a>
+          <a href="#status" data-i18n="navigation.status">Service status</a>
+        </nav>
+        <label class="language-control" for="language-select">
+          <span data-i18n="language.label">Language</span>
+          <select id="language-select" name="language">
+            <option value="en" data-i18n="language.english">English</option>
+            <option value="zh-CN" data-i18n="language.chinese">Simplified Chinese</option>
+          </select>
+        </label>
+      </div>
     </header>
 
     <main>
       <section class="search-band" aria-labelledby="help-title">
         <div class="search-inner">
-          <p class="eyebrow">Northstar Support</p>
-          <h1 id="help-title">How can we help?</h1>
+          <p class="eyebrow" data-i18n="search.eyebrow">Northstar Support</p>
+          <h1 id="help-title" data-i18n="search.title">How can we help?</h1>
           <label class="search-box">
             <span data-lucide="search" aria-hidden="true"></span>
-            <span class="sr-only">Search help articles</span>
-            <input id="article-search" type="search" placeholder="Search help articles" />
+            <span class="sr-only" data-i18n="search.label">Search help articles</span>
+            <input
+              id="article-search"
+              type="search"
+              placeholder="Search help articles"
+              data-i18n-placeholder="search.placeholder"
+            />
           </label>
         </div>
       </section>
 
-      <section class="content" id="guides" aria-label="Help topics">
+      <section
+        class="content"
+        id="guides"
+        aria-label="Help topics"
+        data-i18n-aria-label="topics.label"
+      >
         <div class="topic-grid" id="topic-grid">
-          <article data-search="account profile password security">
+          <article data-search="account profile settings password recovery security 账户 帐户 个人资料 设置 密码 找回 恢复 安全">
             <span class="topic-icon green" data-lucide="user-round"></span>
-            <h2>Account</h2>
-            <p>Profile settings, password recovery, and account security.</p>
-            <a href="#account">View articles <span data-lucide="arrow-right"></span></a>
+            <h2 data-i18n="topics.account.title">Account</h2>
+            <p data-i18n="topics.account.description">
+              Profile settings, password recovery, and account security.
+            </p>
+            <a href="#account">
+              <span data-i18n="topics.viewArticles">View articles</span>
+              <span data-lucide="arrow-right"></span>
+            </a>
           </article>
-          <article data-search="subscription invoice payment billing plan">
+          <article data-search="subscription invoice payment methods billing plan contact 订阅 发票 支付 付款 账单 套餐 方案 联系人">
             <span class="topic-icon amber" data-lucide="receipt-text"></span>
-            <h2>Billing</h2>
-            <p>Plans, invoices, payment methods, and billing contacts.</p>
-            <a href="#billing">View articles <span data-lucide="arrow-right"></span></a>
+            <h2 data-i18n="topics.billing.title">Billing</h2>
+            <p data-i18n="topics.billing.description">
+              Plans, invoices, payment methods, and billing contacts.
+            </p>
+            <a href="#billing">
+              <span data-i18n="topics.viewArticles">View articles</span>
+              <span data-lucide="arrow-right"></span>
+            </a>
           </article>
-          <article data-search="workspace team member invitation role">
+          <article data-search="workspace team teammate member invitation invite role manage 工作区 团队 队友 成员 邀请 角色 管理">
             <span class="topic-icon blue" data-lucide="users"></span>
-            <h2>Workspace</h2>
-            <p>Invite teammates, assign roles, and manage your workspace.</p>
-            <a href="#workspace">View articles <span data-lucide="arrow-right"></span></a>
+            <h2 data-i18n="topics.workspace.title">Workspace</h2>
+            <p data-i18n="topics.workspace.description">
+              Invite teammates, assign roles, and manage your workspace.
+            </p>
+            <a href="#workspace">
+              <span data-i18n="topics.viewArticles">View articles</span>
+              <span data-lucide="arrow-right"></span>
+            </a>
           </article>
         </div>
 
         <div class="article-list">
           <div>
-            <p class="eyebrow">Popular articles</p>
-            <h2>Common questions</h2>
+            <p class="eyebrow" data-i18n="articles.eyebrow">Popular articles</p>
+            <h2 data-i18n="articles.title">Common questions</h2>
           </div>
           <ul>
-            <li><a href="#reset">Reset a forgotten password <span data-lucide="chevron-right"></span></a></li>
-            <li><a href="#invoice">Download a monthly invoice <span data-lucide="chevron-right"></span></a></li>
-            <li><a href="#invite">Invite a workspace member <span data-lucide="chevron-right"></span></a></li>
-            <li><a href="#cancel">Cancel or change a subscription <span data-lucide="chevron-right"></span></a></li>
+            <li>
+              <a href="#reset">
+                <span data-i18n="articles.resetPassword">Reset a forgotten password</span>
+                <span data-lucide="chevron-right"></span>
+              </a>
+            </li>
+            <li>
+              <a href="#invoice">
+                <span data-i18n="articles.downloadInvoice">Download a monthly invoice</span>
+                <span data-lucide="chevron-right"></span>
+              </a>
+            </li>
+            <li>
+              <a href="#invite">
+                <span data-i18n="articles.inviteMember">Invite a workspace member</span>
+                <span data-lucide="chevron-right"></span>
+              </a>
+            </li>
+            <li>
+              <a href="#cancel">
+                <span data-i18n="articles.changeSubscription">Cancel or change a subscription</span>
+                <span data-lucide="chevron-right"></span>
+              </a>
+            </li>
           </ul>
         </div>
       </section>
     </main>
 
     <footer id="status">
-      <span><i></i> All systems operational</span>
-      <small>© 2026 Northstar</small>
+      <span><i></i><span data-i18n="status.operational">All systems operational</span></span>
+      <small data-i18n="footer.copyright">© 2026 Northstar</small>
     </footer>
 
     <ai-support-widget
       id="support-widget"
+      language="en"
       title="Northstar Support"
       welcome="Ask a question about your Northstar account."
     ></ai-support-widget>

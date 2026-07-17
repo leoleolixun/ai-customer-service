@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,6 +12,11 @@ from app.domains.conversations.models import (
     MessageStatus,
 )
 from app.domains.knowledge.schemas import CitationResponse
+
+
+class ConversationLocale(StrEnum):
+    EN = "en"
+    ZH_CN = "zh-CN"
 
 
 class ConversationCreate(BaseModel):
@@ -30,6 +36,7 @@ class ConversationResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=8_000)
+    locale: ConversationLocale = ConversationLocale.EN
 
 
 class MessageResponse(BaseModel):

@@ -40,8 +40,10 @@ import type {
   SearchResult,
 } from '@/api/types';
 import PageHeader from '@/components/PageHeader';
+import { useI18n } from '@/i18n/I18nProvider';
 
 const KnowledgePage: React.FC = () => {
+  const { messages } = useI18n();
   const queryClient = useQueryClient();
   const { data: bases } = useSuspenseQuery({
     queryKey: ['knowledge-bases'],
@@ -73,20 +75,20 @@ const KnowledgePage: React.FC = () => {
       setName('');
       setDescription('');
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [description, modelId, name, queryClient]);
+  }, [description, messages.common.requestFailed, modelId, name, queryClient]);
 
   const selected = bases.find((item) => item.id === selectedId) ?? null;
   return (
     <>
-      <PageHeader title="Knowledge" description="Versioned source documents and retrieval diagnostics." action={{ label: 'New knowledge base', icon: Plus, onClick: () => setOpen(true) }} />
+      <PageHeader title={messages.knowledge.title} description={messages.knowledge.description} action={{ label: messages.knowledge.newKnowledgeBase, icon: Plus, onClick: () => setOpen(true) }} />
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: '260px minmax(0, 1fr)' }, minHeight: 560 }}>
         <Paper variant="outlined" sx={{ alignSelf: 'start', overflow: 'hidden' }}>
-          <Typography fontSize={12} fontWeight={700} sx={{ px: 2, py: 1.5 }} textTransform="uppercase">Knowledge bases</Typography>
+          <Typography fontSize={12} fontWeight={700} sx={{ px: 2, py: 1.5 }} textTransform="uppercase">{messages.knowledge.knowledgeBases}</Typography>
           <Divider />
           <List disablePadding>
             {bases.map((base) => (
@@ -98,29 +100,30 @@ const KnowledgePage: React.FC = () => {
         </Paper>
         <Paper variant="outlined" sx={{ minWidth: 0, p: { xs: 2, md: 3 } }}>
           {selected ? (
-            <Suspense fallback={<Typography color="text.secondary">Loading documents…</Typography>}>
+            <Suspense fallback={<Typography color="text.secondary">{messages.knowledge.loadingDocuments}</Typography>}>
               <KnowledgeDetail base={selected} />
             </Suspense>
           ) : (
-            <Typography color="text.secondary">Create a knowledge base to add source documents.</Typography>
+            <Typography color="text.secondary">{messages.knowledge.createFirst}</Typography>
           )}
         </Paper>
       </Box>
 
       <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>New knowledge base</DialogTitle>
+        <DialogTitle>{messages.knowledge.newKnowledgeBase}</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
-          <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} required />
-          <TextField label="Description" value={description} onChange={(event) => setDescription(event.target.value)} multiline minRows={2} />
-          <FormControl><InputLabel>Embedding model</InputLabel><Select label="Embedding model" value={modelId} onChange={(event) => setModelId(event.target.value)}>{models.filter((model) => model.purpose === 'embedding').map((model) => <MenuItem key={model.id} value={model.id}>{model.name} ({model.embedding_dimension})</MenuItem>)}</Select></FormControl>
+          <TextField label={messages.common.name} value={name} onChange={(event) => setName(event.target.value)} required />
+          <TextField label={messages.common.description} value={description} onChange={(event) => setDescription(event.target.value)} multiline minRows={2} />
+          <FormControl><InputLabel>{messages.knowledge.embeddingModel}</InputLabel><Select label={messages.knowledge.embeddingModel} value={modelId} onChange={(event) => setModelId(event.target.value)}>{models.filter((model) => model.purpose === 'embedding').map((model) => <MenuItem key={model.id} value={model.id}>{model.name} ({model.embedding_dimension})</MenuItem>)}</Select></FormControl>
         </DialogContent>
-        <DialogActions><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="contained" disabled={!name.trim() || !modelId || busy} onClick={() => void create()}>Create</Button></DialogActions>
+        <DialogActions><Button onClick={() => setOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!name.trim() || !modelId || busy} onClick={() => void create()}>{messages.common.create}</Button></DialogActions>
       </Dialog>
     </>
   );
 };
 
 const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
+  const { format, labelValue, language, messages } = useI18n();
   const queryClient = useQueryClient();
   const { data: documents = [] } = useQuery({
     queryKey: ['knowledge-documents', base.id],
@@ -166,11 +169,11 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       setReplacement(null);
       await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [base.id, file, queryClient, replacement, sourceUrl, title]);
+  }, [base.id, file, messages.common.requestFailed, queryClient, replacement, sourceUrl, title]);
 
   const openUpload = useCallback((document: KnowledgeDocument | null = null) => {
     setReplacement(document);
@@ -187,11 +190,11 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       await api(`/v1/admin/knowledge-bases/${base.id}/documents/${document.id}/retry`, { method: 'POST' });
       await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [base.id, queryClient]);
+  }, [base.id, messages.common.requestFailed, queryClient]);
 
   const deleteDocument = useCallback(async () => {
     if (!deleting) return;
@@ -202,11 +205,11 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       setDeleting(null);
       await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [base.id, deleting, queryClient]);
+  }, [base.id, deleting, messages.common.requestFailed, queryClient]);
 
   const bind = useCallback(async () => {
     setBusy(true);
@@ -217,11 +220,11 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       setBindOpen(false);
       setApplicationId('');
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [applicationId, base.id, queryClient]);
+  }, [applicationId, base.id, messages.common.requestFailed, queryClient]);
 
   const unbind = useCallback(async (id: string) => {
     setBusy(true);
@@ -230,11 +233,11 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       await api(`/v1/admin/knowledge-bases/${base.id}/applications/${id}`, { method: 'DELETE' });
       await queryClient.invalidateQueries({ queryKey: ['knowledge-base-applications', base.id] });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [base.id, queryClient]);
+  }, [base.id, messages.common.requestFailed, queryClient]);
 
   const search = useCallback(async () => {
     setBusy(true);
@@ -242,36 +245,68 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
     try {
       setResults(await api<SearchResult[]>(`/v1/admin/knowledge-bases/${base.id}/search`, { method: 'POST', body: JSON.stringify({ query, top_k: 5 }) }));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [base.id, query]);
+  }, [base.id, messages.common.requestFailed, query]);
 
   return (
     <>
       <Box sx={{ alignItems: { sm: 'center' }, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, justifyContent: 'space-between', mb: 2 }}>
-        <Box><Typography component="h2" variant="h2">{base.name}</Typography><Typography color="text.secondary" fontSize={12}>{base.description || `${base.embedding_model_name} · ${base.embedding_dimension} dimensions`}</Typography></Box>
-        <Box sx={{ display: 'flex', gap: 1 }}><Button startIcon={<Link2 size={15} />} disabled={boundApplications.length === applications.length} onClick={() => setBindOpen(true)}>Bind app</Button><Button variant="contained" startIcon={<FileUp size={15} />} onClick={() => openUpload()}>Upload</Button></Box>
+        <Box>
+          <Typography component="h2" variant="h2">{base.name}</Typography>
+          <Typography color="text.secondary" fontSize={12}>
+            {base.description || format(messages.knowledge.dimensions, {
+              model: base.embedding_model_name,
+              dimensions: base.embedding_dimension,
+            })}
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button startIcon={<Link2 size={15} />} disabled={boundApplications.length === applications.length} onClick={() => setBindOpen(true)}>{messages.knowledge.bindApp}</Button>
+          <Button variant="contained" startIcon={<FileUp size={15} />} onClick={() => openUpload()}>{messages.knowledge.upload}</Button>
+        </Box>
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Box sx={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-        <Typography color="text.secondary" fontSize={12}>Bound applications</Typography>
+        <Typography color="text.secondary" fontSize={12}>{messages.knowledge.boundApplications}</Typography>
         {boundApplications.map((application) => <Chip key={application.id} label={application.name} size="small" disabled={busy} onDelete={() => void unbind(application.id)} />)}
-        {boundApplications.length === 0 && <Typography color="text.secondary" fontSize={12}>None</Typography>}
+        {boundApplications.length === 0 && <Typography color="text.secondary" fontSize={12}>{messages.common.none}</Typography>}
       </Box>
       <TableContainer sx={{ border: 1, borderColor: 'divider', borderRadius: 1 }}>
-        <Table size="small"><TableHead><TableRow><TableCell>Document</TableCell><TableCell>Version</TableCell><TableCell>Size</TableCell><TableCell>Status</TableCell><TableCell>Updated</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>{documents.map((document) => { const processing = ['uploaded', 'processing'].includes(document.status); return <TableRow key={document.id}><TableCell><Typography fontSize={13} fontWeight={650}>{document.title}</Typography><Typography color="text.secondary" fontSize={11}>{document.source_filename}</Typography>{document.error_message && <Typography color="error.main" fontSize={11}>{document.error_message}</Typography>}</TableCell><TableCell>v{document.version}</TableCell><TableCell>{Math.ceil(document.byte_size / 1024)} KB</TableCell><TableCell><Chip size="small" color={document.status === 'ready' ? 'success' : document.status === 'failed' ? 'error' : 'default'} label={document.status} /></TableCell><TableCell>{new Date(document.updated_at).toLocaleString()}</TableCell><TableCell align="right" sx={{ whiteSpace: 'nowrap', width: 112 }}><Tooltip title="Upload replacement"><span><IconButton size="small" disabled={processing || busy} aria-label={`Replace ${document.title}`} onClick={() => openUpload(document)}><Repeat2 size={15} /></IconButton></span></Tooltip>{document.status === 'failed' && <Tooltip title="Retry ingestion"><span><IconButton size="small" disabled={busy} aria-label={`Retry ${document.title}`} onClick={() => void retry(document)}><RefreshCw size={15} /></IconButton></span></Tooltip>}<Tooltip title="Delete document"><span><IconButton size="small" color="error" disabled={processing || busy} aria-label={`Delete ${document.title}`} onClick={() => setDeleting(document)}><Trash2 size={15} /></IconButton></span></Tooltip></TableCell></TableRow>; })}</TableBody></Table>
+        <Table size="small">
+          <TableHead><TableRow><TableCell>{messages.knowledge.document}</TableCell><TableCell>{messages.knowledge.version}</TableCell><TableCell>{messages.knowledge.size}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell>{messages.common.updated}</TableCell><TableCell align="right">{messages.common.actions}</TableCell></TableRow></TableHead>
+          <TableBody>
+            {documents.map((document) => {
+              const processing = ['uploaded', 'processing'].includes(document.status);
+              return (
+                <TableRow key={document.id}>
+                  <TableCell><Typography fontSize={13} fontWeight={650}>{document.title}</Typography><Typography color="text.secondary" fontSize={11}>{document.source_filename}</Typography>{document.error_message && <Typography color="error.main" fontSize={11}>{document.error_message}</Typography>}</TableCell>
+                  <TableCell>{format(messages.knowledge.documentVersion, { version: document.version })}</TableCell>
+                  <TableCell>{format(messages.knowledge.documentSize, { size: Math.ceil(document.byte_size / 1024) })}</TableCell>
+                  <TableCell><Chip size="small" color={document.status === 'ready' ? 'success' : document.status === 'failed' ? 'error' : 'default'} label={labelValue(document.status)} /></TableCell>
+                  <TableCell>{new Date(document.updated_at).toLocaleString(language)}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap', width: 112 }}>
+                    <Tooltip title={messages.knowledge.uploadReplacement}><span><IconButton size="small" disabled={processing || busy} aria-label={format(messages.knowledge.replaceAria, { name: document.title })} onClick={() => openUpload(document)}><Repeat2 size={15} /></IconButton></span></Tooltip>
+                    {document.status === 'failed' && <Tooltip title={messages.knowledge.retryIngestion}><span><IconButton size="small" disabled={busy} aria-label={format(messages.knowledge.retryAria, { name: document.title })} onClick={() => void retry(document)}><RefreshCw size={15} /></IconButton></span></Tooltip>}
+                    <Tooltip title={messages.knowledge.deleteDocument}><span><IconButton size="small" color="error" disabled={processing || busy} aria-label={format(messages.knowledge.deleteAria, { name: document.title })} onClick={() => setDeleting(document)}><Trash2 size={15} /></IconButton></span></Tooltip>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </TableContainer>
 
       <Divider sx={{ my: 3 }} />
-      <Typography component="h2" variant="h2" sx={{ mb: 1.5 }}>Retrieval diagnostics</Typography>
-      <Box sx={{ display: 'grid', gap: 1, gridTemplateColumns: 'minmax(0, 1fr) auto' }}><TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search this knowledge base" /><Button variant="outlined" startIcon={<Search size={15} />} disabled={!query.trim() || busy} onClick={() => void search()}>Search</Button></Box>
-      <Box sx={{ display: 'grid', gap: 1, mt: 2 }}>{results.map((result) => <Box key={result.chunk_id} sx={{ borderBottom: 1, borderColor: 'divider', pb: 1.5 }}><Typography fontSize={13} fontWeight={650}>{result.document_title}</Typography><Typography color="text.secondary" fontSize={12} sx={{ my: 0.5 }}>{result.content}</Typography><Typography color="primary.main" fontSize={11}>RRF {result.score.toFixed(4)} · vector {result.vector_similarity.toFixed(3)} · keyword {result.keyword_score.toFixed(3)}</Typography></Box>)}</Box>
+      <Typography component="h2" variant="h2" sx={{ mb: 1.5 }}>{messages.knowledge.retrievalDiagnostics}</Typography>
+      <Box sx={{ display: 'grid', gap: 1, gridTemplateColumns: 'minmax(0, 1fr) auto' }}><TextField size="small" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={messages.knowledge.searchPlaceholder} /><Button variant="outlined" startIcon={<Search size={15} />} disabled={!query.trim() || busy} onClick={() => void search()}>{messages.knowledge.search}</Button></Box>
+      <Box sx={{ display: 'grid', gap: 1, mt: 2 }}>{results.map((result) => <Box key={result.chunk_id} sx={{ borderBottom: 1, borderColor: 'divider', pb: 1.5 }}><Typography fontSize={13} fontWeight={650}>{result.document_title}</Typography><Typography color="text.secondary" fontSize={12} sx={{ my: 0.5 }}>{result.content}</Typography><Typography color="primary.main" fontSize={11}>{format(messages.knowledge.resultScores, { rrf: result.score.toFixed(4), vector: result.vector_similarity.toFixed(3), keyword: result.keyword_score.toFixed(3) })}</Typography></Box>)}</Box>
 
-      <Dialog open={uploadOpen} onClose={() => setUploadOpen(false)} fullWidth maxWidth="sm"><DialogTitle>{replacement ? `Replace ${replacement.title}` : 'Upload document'}</DialogTitle><DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>{replacement && <Alert severity="info">The existing version remains active until the replacement finishes processing.</Alert>}<Button component="label" variant="outlined" startIcon={<FileUp size={16} />}>{file?.name ?? 'Choose TXT, Markdown, or PDF'}<input hidden type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></Button><TextField label="Title" value={title} onChange={(event) => setTitle(event.target.value)} /><TextField label="Source URL" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} /></DialogContent><DialogActions><Button onClick={() => setUploadOpen(false)}>Cancel</Button><Button variant="contained" disabled={!file || busy} onClick={() => void upload()}>{replacement ? 'Upload replacement' : 'Upload'}</Button></DialogActions></Dialog>
-      <Dialog open={bindOpen} onClose={() => setBindOpen(false)} fullWidth maxWidth="xs"><DialogTitle>Bind to application</DialogTitle><DialogContent sx={{ pt: '8px !important' }}><FormControl fullWidth><InputLabel>Application</InputLabel><Select label="Application" value={applicationId} onChange={(event) => setApplicationId(event.target.value)}>{applications.filter((application) => !boundApplications.some((bound) => bound.id === application.id)).map((application) => <MenuItem key={application.id} value={application.id}><Box sx={{ alignItems: 'center', display: 'flex', gap: 1 }}><AppWindow size={15} />{application.name}</Box></MenuItem>)}</Select></FormControl></DialogContent><DialogActions><Button onClick={() => setBindOpen(false)}>Cancel</Button><Button variant="contained" disabled={!applicationId || busy} onClick={() => void bind()}>Bind</Button></DialogActions></Dialog>
-      <Dialog open={Boolean(deleting)} onClose={() => !busy && setDeleting(null)} fullWidth maxWidth="xs"><DialogTitle>Delete document?</DialogTitle><DialogContent><Typography color="text.secondary" fontSize={13}>This removes {deleting?.title} from retrieval and deletes its stored source file. This action cannot be undone.</Typography></DialogContent><DialogActions><Button onClick={() => setDeleting(null)} disabled={busy}>Cancel</Button><Button color="error" variant="contained" disabled={busy} onClick={() => void deleteDocument()}>Delete</Button></DialogActions></Dialog>
+      <Dialog open={uploadOpen} onClose={() => setUploadOpen(false)} fullWidth maxWidth="sm"><DialogTitle>{replacement ? format(messages.knowledge.replaceTitle, { name: replacement.title }) : messages.knowledge.uploadDocument}</DialogTitle><DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>{replacement && <Alert severity="info">{messages.knowledge.replacementInfo}</Alert>}<Button component="label" variant="outlined" startIcon={<FileUp size={16} />}>{file?.name ?? messages.knowledge.chooseFile}<input hidden type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></Button><TextField label={messages.knowledge.documentTitle} value={title} onChange={(event) => setTitle(event.target.value)} /><TextField label={messages.knowledge.sourceUrl} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} /></DialogContent><DialogActions><Button onClick={() => setUploadOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!file || busy} onClick={() => void upload()}>{replacement ? messages.knowledge.uploadReplacement : messages.knowledge.upload}</Button></DialogActions></Dialog>
+      <Dialog open={bindOpen} onClose={() => setBindOpen(false)} fullWidth maxWidth="xs"><DialogTitle>{messages.knowledge.bindToApplication}</DialogTitle><DialogContent sx={{ pt: '8px !important' }}><FormControl fullWidth><InputLabel>{messages.common.application}</InputLabel><Select label={messages.common.application} value={applicationId} onChange={(event) => setApplicationId(event.target.value)}>{applications.filter((application) => !boundApplications.some((bound) => bound.id === application.id)).map((application) => <MenuItem key={application.id} value={application.id}><Box sx={{ alignItems: 'center', display: 'flex', gap: 1 }}><AppWindow size={15} />{application.name}</Box></MenuItem>)}</Select></FormControl></DialogContent><DialogActions><Button onClick={() => setBindOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!applicationId || busy} onClick={() => void bind()}>{messages.knowledge.bind}</Button></DialogActions></Dialog>
+      <Dialog open={Boolean(deleting)} onClose={() => !busy && setDeleting(null)} fullWidth maxWidth="xs"><DialogTitle>{messages.knowledge.deleteDocumentTitle}</DialogTitle><DialogContent><Typography color="text.secondary" fontSize={13}>{format(messages.knowledge.deleteDocumentDescription, { name: deleting?.title ?? '' })}</Typography></DialogContent><DialogActions><Button onClick={() => setDeleting(null)} disabled={busy}>{messages.common.cancel}</Button><Button color="error" variant="contained" disabled={busy} onClick={() => void deleteDocument()}>{messages.common.delete}</Button></DialogActions></Dialog>
     </>
   );
 };

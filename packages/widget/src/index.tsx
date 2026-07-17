@@ -2,7 +2,12 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import Widget from './Widget';
+import { parseWidgetLanguage, type WidgetLanguage } from './i18n';
 import styles from './widget.css?inline';
+
+export { default as Widget } from './Widget';
+export type { WidgetProps } from './Widget';
+export type { WidgetLanguage } from './i18n';
 
 export class AISupportWidgetElement extends HTMLElement {
   private root: Root | null = null;
@@ -11,7 +16,7 @@ export class AISupportWidgetElement extends HTMLElement {
   tokenProvider: (() => string | Promise<string>) | null = null;
 
   static get observedAttributes(): string[] {
-    return ['base-url', 'application-id', 'session-key', 'token', 'title', 'welcome'];
+    return ['base-url', 'application-id', 'session-key', 'token', 'title', 'welcome', 'language'];
   }
 
   connectedCallback(): void {
@@ -59,8 +64,14 @@ export class AISupportWidgetElement extends HTMLElement {
         applicationId={applicationId}
         getToken={getToken}
         sessionKey={this.getAttribute('session-key') ?? undefined}
-        title={this.getAttribute('title') ?? 'Support'}
-        welcome={this.getAttribute('welcome') ?? 'How can we help today?'}
+        title={this.getAttribute('title') ?? undefined}
+        welcome={this.getAttribute('welcome') ?? undefined}
+        language={parseWidgetLanguage(this.getAttribute('language'))}
+        onLanguageChange={(language: WidgetLanguage) => {
+          if (this.getAttribute('language') !== language) {
+            this.setAttribute('language', language);
+          }
+        }}
       />,
     );
   }
@@ -81,5 +92,6 @@ if (script?.dataset.baseUrl && !document.querySelector('ai-support-widget')) {
   if (script.dataset.token) element.setAttribute('token', script.dataset.token);
   if (script.dataset.title) element.setAttribute('title', script.dataset.title);
   if (script.dataset.welcome) element.setAttribute('welcome', script.dataset.welcome);
+  if (script.dataset.language) element.setAttribute('language', script.dataset.language);
   document.body.append(element);
 }

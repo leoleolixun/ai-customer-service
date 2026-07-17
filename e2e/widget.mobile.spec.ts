@@ -29,8 +29,9 @@ test('widget uses full-screen mobile dialog semantics without horizontal overflo
   });
 
   await page.goto('http://127.0.0.1:5174');
-  await page.getByRole('button', { name: 'Open support' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Northstar Support' });
+  await page.locator('#language-select').selectOption('zh-CN');
+  await page.getByRole('button', { name: '打开客服' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Northstar 客户支持' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute('aria-modal', 'false');
 
@@ -51,6 +52,7 @@ test('widget uses full-screen mobile dialog semantics without horizontal overflo
   expect(Math.abs(measurements.width - measurements.viewportWidth)).toBeLessThanOrEqual(1);
   expect(Math.abs(measurements.height - measurements.viewportHeight)).toBeLessThanOrEqual(1);
   expect(measurements.horizontalOverflow).toBeLessThanOrEqual(0);
-  await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close support' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '关闭客服' })).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name: '语言' })).toHaveValue('zh-CN');
 });

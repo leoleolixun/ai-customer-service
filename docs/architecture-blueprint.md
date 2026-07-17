@@ -479,11 +479,13 @@ Webhook 使用 HMAC 签名，签名内容包含时间戳、事件 ID 和原始 B
 ```html
 <script
   src="https://cdn.example.com/ai-support-widget.js"
-  data-application-id="app_xxx">
+  data-application-id="app_xxx"
+  data-language="zh-CN">
 </script>
 ```
 
-`application_id` 是公开标识，不具有服务端权限。登录用户的推荐流程：
+`application_id` 是公开标识，不具有服务端权限。`data-language` 支持 `en` 和 `zh-CN`，也可以由用户在
+Widget 内切换；所选语言随消息请求传给平台。登录用户的推荐流程：
 
 ```text
 业务前端 -> 业务后端：申请客服 Token

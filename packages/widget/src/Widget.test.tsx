@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import './index';
 import Widget from './Widget';
-import type { AISupportWidgetElement } from './index';
+import { AISupportWidgetElement } from './index';
+import { WIDGET_LANGUAGE_STORAGE_KEY } from './i18n';
 
 const conversation = {
   id: 'conversation-1',
@@ -39,6 +40,7 @@ function successfulFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 
 describe('Widget', () => {
   beforeEach(() => {
+    localStorage.clear();
     sessionStorage.clear();
     vi.stubGlobal('fetch', vi.fn(successfulFetch));
   });
@@ -95,6 +97,110 @@ describe('Widget', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Gateway unavailable');
     await user.click(screen.getByRole('button', { name: 'Close support' }));
     expect(screen.getByRole('button', { name: 'Open support' })).toBeVisible();
+  });
+
+  it('renders the default interface and fallback error in Simplified Chinese', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network unavailable'))));
+    const user = userEvent.setup();
+    render(
+      <Widget
+        applicationId="application-1"
+        baseUrl="https://support.example.test"
+        getToken={() => 'customer-token'}
+        language="zh-CN"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '打开客服' }));
+
+    expect(await screen.findByRole('dialog', { name: '在线客服' })).toBeVisible();
+    expect(await screen.findByText('您好，请问有什么可以帮您？')).toBeVisible();
+    expect(screen.getByRole('combobox', { name: '语言' })).toHaveValue('zh-CN');
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveAttribute('placeholder', '请输入消息');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '联系人工客服' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '关闭客服' })).toBeEnabled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('客服暂时不可用，请稍后重试。');
+  });
+
+  it('persists a user language choice and uses it when the host does not specify one', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const view = render(
+      <Widget
+        applicationId="application-1"
+        baseUrl="https://support.example.test"
+        getToken={() => 'customer-token'}
+        language="en"
+        title="Acme support"
+        welcome="Welcome to Acme"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Open support' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'zh-CN');
+
+    expect(localStorage.getItem(WIDGET_LANGUAGE_STORAGE_KEY)).toBe('zh-CN');
+    expect(screen.getByRole('combobox', { name: '语言' })).toHaveValue('zh-CN');
+    expect(screen.getByRole('dialog', { name: 'Acme support' })).toBeVisible();
+    expect(screen.getByText('Welcome to Acme')).toBeVisible();
+    expect(screen.getByRole('button', { name: '关闭客服' })).toBeEnabled();
+
+    await user.type(screen.getByRole('textbox', { name: '消息' }), '请使用中文回答');
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://support.example.test/v1/chat/sessions/conversation-1/messages',
+        expect.objectContaining({
+          body: JSON.stringify({ content: '请使用中文回答', locale: 'zh-CN' }),
+          method: 'POST',
+        }),
+      );
+    });
+
+    view.unmount();
+    render(
+      <Widget
+        applicationId="application-1"
+        baseUrl="https://support.example.test"
+        getToken={() => 'customer-token'}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '打开客服' })).toBeVisible();
+  });
+
+  it('uses the browser language when neither the host nor storage specifies one', () => {
+    vi.spyOn(window.navigator, 'language', 'get').mockReturnValue('zh-TW');
+
+    render(
+      <Widget
+        applicationId="application-1"
+        baseUrl="https://support.example.test"
+        getToken={() => 'customer-token'}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '打开客服' })).toBeVisible();
+  });
+
+  it('uses the language attribute and rerenders immediately when it changes', async () => {
+    expect(AISupportWidgetElement.observedAttributes).toContain('language');
+    const element = document.createElement('ai-support-widget') as AISupportWidgetElement;
+    element.setAttribute('token', 'customer-token');
+    element.setAttribute('language', 'zh-CN');
+
+    act(() => document.body.append(element));
+    const mount = element.shadowRoot?.querySelector('div') as HTMLElement;
+    await waitFor(() => {
+      expect(within(mount).getByRole('button', { name: '打开客服' })).toBeVisible();
+    });
+
+    act(() => element.setAttribute('language', 'en'));
+
+    await waitFor(() => {
+      expect(within(mount).getByRole('button', { name: 'Open support' })).toBeVisible();
+    });
   });
 
   it('opens an authenticated uploaded citation when no external source URL exists', async () => {
@@ -179,7 +285,7 @@ describe('Widget', () => {
       created_at: conversation.created_at,
       updated_at: conversation.updated_at,
     };
-    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith('/v1/chat/sessions') && init?.method === 'POST') {
         return Promise.resolve(json(conversation, 201));
@@ -205,7 +311,8 @@ describe('Widget', () => {
         return Promise.resolve(json(requested ? [agentMessage] : []));
       }
       return Promise.resolve(json(conversation));
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(
       <Widget
@@ -222,6 +329,13 @@ describe('Widget', () => {
 
     expect(await screen.findByText('A human agent reply')).toBeVisible();
     expect(screen.getByText('Agent online')).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://support.example.test/v1/chat/sessions/conversation-1/handoff',
+      expect.objectContaining({
+        body: JSON.stringify({ reason: 'customer_requested_handoff' }),
+        method: 'POST',
+      }),
+    );
   });
 
   it('can disconnect and reconnect the custom element without losing its mount point', async () => {

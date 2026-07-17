@@ -11,9 +11,11 @@ from sqlalchemy import select
 from app.core.database import async_session_factory, engine
 from app.core.security import CustomerPrincipal
 from app.domains.applications.models import Application
+from app.domains.conversations.schemas import ConversationLocale
 from app.domains.conversations.service import (
     CONFLICT_RESPONSE,
     HUMAN_REQUIRED_RESPONSE,
+    LOCALIZED_REFUSALS,
     NO_EVIDENCE_RESPONSE,
     SECURITY_REFUSAL_RESPONSE,
     ConversationService,
@@ -30,6 +32,12 @@ def source_id(source_url: str | None) -> str | None:
     if not source_url:
         return None
     return urlsplit(source_url).path.strip("/") or None
+
+
+def locale_for_question(question: str) -> ConversationLocale:
+    if any("\u3400" <= character <= "\u9fff" for character in question):
+        return ConversationLocale.ZH_CN
+    return ConversationLocale.EN
 
 
 def parse_sse(payload: str) -> tuple[str, list[str]]:
@@ -92,10 +100,12 @@ async def run_case(session: Any, case: dict[str, Any]) -> dict[str, Any]:
     )
     service = ConversationService(session)
     conversation = await service.create_session(principal)
+    locale = locale_for_question(str(case["question"]))
     prepared = await service.prepare_chat(
         principal=principal,
         conversation_id=conversation.id,
         content=str(case["question"]),
+        locale=locale,
         idempotency_key=f"evaluation:{case['id']}",
     )
     stream = "".join([event async for event in service.stream_chat(prepared)])
@@ -105,6 +115,7 @@ async def run_case(session: Any, case: dict[str, Any]) -> dict[str, Any]:
         SECURITY_REFUSAL_RESPONSE,
         CONFLICT_RESPONSE,
         HUMAN_REQUIRED_RESPONSE,
+        *(response for responses in LOCALIZED_REFUSALS.values() for response in responses.values()),
     }
     return {
         "case_id": case["id"],
@@ -113,7 +124,7 @@ async def run_case(session: Any, case: dict[str, Any]) -> dict[str, Any]:
         "cited_sources": cited_sources,
         "source_tenants": source_tenants,
         "refused": answer in refusal_responses,
-        "handoff": answer == HUMAN_REQUIRED_RESPONSE,
+        "handoff": answer == LOCALIZED_REFUSALS[locale]["human_required"],
     }
 
 

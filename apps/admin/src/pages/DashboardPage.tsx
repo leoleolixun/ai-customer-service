@@ -7,6 +7,7 @@ import { api } from '@/api/client';
 import type { Application, Handoff, Tenant, UsageSummary } from '@/api/types';
 import { useAuth } from '@/auth/AuthProvider';
 import PageHeader from '@/components/PageHeader';
+import { useI18n } from '@/i18n/I18nProvider';
 
 const DashboardPage: React.FC = () => {
   const { user } = useAuth();
@@ -15,22 +16,24 @@ const DashboardPage: React.FC = () => {
 };
 
 const PlatformOverview: React.FC = () => {
+  const { messages } = useI18n();
   const { data: tenants } = useSuspenseQuery({
     queryKey: ['tenants'],
     queryFn: () => api<Tenant[]>('/v1/platform/tenants'),
   });
   return (
     <>
-      <PageHeader title="Platform overview" description="Tenant lifecycle and platform access." />
+      <PageHeader title={messages.dashboard.platformTitle} description={messages.dashboard.platformDescription} />
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' } }}>
-        <Paper variant="outlined" sx={{ p: 3 }}><Typography color="text.secondary" fontSize={13}>Total tenants</Typography><Typography fontSize={32} fontWeight={750}>{tenants.length}</Typography></Paper>
-        <Paper variant="outlined" sx={{ p: 3 }}><Typography color="text.secondary" fontSize={13}>Active tenants</Typography><Typography fontSize={32} fontWeight={750}>{tenants.filter((tenant) => tenant.status === 'active').length}</Typography></Paper>
+        <Paper variant="outlined" sx={{ p: 3 }}><Typography color="text.secondary" fontSize={13}>{messages.dashboard.totalTenants}</Typography><Typography fontSize={32} fontWeight={750}>{tenants.length}</Typography></Paper>
+        <Paper variant="outlined" sx={{ p: 3 }}><Typography color="text.secondary" fontSize={13}>{messages.dashboard.activeTenants}</Typography><Typography fontSize={32} fontWeight={750}>{tenants.filter((tenant) => tenant.status === 'active').length}</Typography></Paper>
       </Box>
     </>
   );
 };
 
 const TenantOverview: React.FC = () => {
+  const { language, messages } = useI18n();
   const { data: applications } = useSuspenseQuery({
     queryKey: ['applications'],
     queryFn: () => api<Application[]>('/v1/admin/applications'),
@@ -44,14 +47,14 @@ const TenantOverview: React.FC = () => {
     queryFn: () => api<Handoff[]>('/v1/admin/handoffs?status=pending'),
   });
   const metrics = [
-    { label: 'Applications', value: applications.length, icon: AppWindow, color: '#147a5b' },
-    { label: 'AI requests', value: usage.total_requests, icon: Activity, color: '#3367a8' },
-    { label: 'Failed requests', value: usage.failed_requests, icon: CircleAlert, color: '#b14a3c' },
-    { label: 'Waiting handoffs', value: pending.length, icon: Headphones, color: '#ba6a12' },
+    { label: messages.dashboard.applications, value: applications.length, icon: AppWindow, color: '#147a5b' },
+    { label: messages.dashboard.aiRequests, value: usage.total_requests, icon: Activity, color: '#3367a8' },
+    { label: messages.dashboard.failedRequests, value: usage.failed_requests, icon: CircleAlert, color: '#b14a3c' },
+    { label: messages.dashboard.waitingHandoffs, value: pending.length, icon: Headphones, color: '#ba6a12' },
   ];
   return (
     <>
-      <PageHeader title="Overview" description="Current tenant activity for the last 30 days." />
+      <PageHeader title={messages.dashboard.tenantTitle} description={messages.dashboard.tenantDescription} />
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', xl: 'repeat(4, 1fr)' } }}>
         {metrics.map((metric) => (
           <Paper key={metric.label} variant="outlined" sx={{ alignItems: 'center', display: 'flex', gap: 2, p: 2.5 }}>
@@ -60,7 +63,7 @@ const TenantOverview: React.FC = () => {
             </Box>
             <Box>
               <Typography color="text.secondary" fontSize={12}>{metric.label}</Typography>
-              <Typography fontSize={24} fontWeight={750}>{metric.value.toLocaleString()}</Typography>
+              <Typography fontSize={24} fontWeight={750}>{metric.value.toLocaleString(language)}</Typography>
             </Box>
           </Paper>
         ))}
@@ -70,15 +73,16 @@ const TenantOverview: React.FC = () => {
 };
 
 const AgentOverview: React.FC = () => {
+  const { messages } = useI18n();
   const { data: pending } = useSuspenseQuery({
     queryKey: ['handoffs', 'pending'],
     queryFn: () => api<Handoff[]>('/v1/admin/handoffs?status=pending'),
   });
   return (
     <>
-      <PageHeader title="Agent workspace" description="Conversations waiting for a human response." />
+      <PageHeader title={messages.dashboard.agentTitle} description={messages.dashboard.agentDescription} />
       <Paper variant="outlined" sx={{ p: 3 }}>
-        <Typography color="text.secondary" fontSize={13}>Waiting conversations</Typography>
+        <Typography color="text.secondary" fontSize={13}>{messages.dashboard.waitingConversations}</Typography>
         <Typography fontSize={32} fontWeight={750} sx={{ mt: 0.5 }}>{pending.length}</Typography>
       </Paper>
     </>

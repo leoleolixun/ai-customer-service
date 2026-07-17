@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 
 import { AuthProvider } from '@/auth/AuthProvider';
 import { AppErrorBoundary } from '@/components/AppErrorBoundary';
+import { I18nProvider, useI18n } from '@/i18n/I18nProvider';
 import { router } from '@/router';
 import { theme } from '@/theme';
 
@@ -16,19 +17,28 @@ const queryClient = new QueryClient({
   },
 });
 
+const AdminApplication: React.FC = () => {
+  const { messages } = useI18n();
+  return (
+    <AppErrorBoundary>
+      <AuthProvider>
+        <Suspense fallback={<LinearProgress aria-label={messages.app.loadingConsole} />}>
+          <RouterProvider router={router} />
+        </Suspense>
+      </AuthProvider>
+    </AppErrorBoundary>
+  );
+};
+
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <QueryClientProvider client={queryClient}>
-        <AppErrorBoundary>
-          <AuthProvider>
-            <Suspense fallback={<LinearProgress aria-label="Loading console" />}>
-              <RouterProvider router={router} />
-            </Suspense>
-          </AuthProvider>
-        </AppErrorBoundary>
-      </QueryClientProvider>
-    </ThemeProvider>
+    <I18nProvider>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <QueryClientProvider client={queryClient}>
+          <AdminApplication />
+        </QueryClientProvider>
+      </ThemeProvider>
+    </I18nProvider>
   </React.StrictMode>,
 );

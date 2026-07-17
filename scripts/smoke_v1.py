@@ -186,7 +186,7 @@ async def run_demo(
         answer_response = await client.post(
             f"/v1/chat/sessions/{conversation_id}/messages",
             headers={**customer_headers, "Idempotency-Key": f"smoke-answer:{uuid4()}"},
-            json={"content": definition.answerable_question},
+            json={"content": definition.answerable_question, "locale": "zh-CN"},
         )
         if answer_response.status_code != 200:
             raise RuntimeError(
@@ -207,7 +207,7 @@ async def run_demo(
         refusal_response = await client.post(
             f"/v1/chat/sessions/{conversation_id}/messages",
             headers={**customer_headers, "Idempotency-Key": f"smoke-refusal:{uuid4()}"},
-            json={"content": definition.refusal_question},
+            json={"content": definition.refusal_question, "locale": "zh-CN"},
         )
         if refusal_response.status_code != 200:
             raise RuntimeError(

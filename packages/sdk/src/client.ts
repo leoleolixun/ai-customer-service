@@ -6,6 +6,7 @@ import type {
   Handoff,
   Message,
   StreamEvent,
+  SupportedLocale,
 } from './types';
 
 export class SupportApiError extends Error {
@@ -25,17 +26,20 @@ export class SupportApiError extends Error {
 export interface SupportClientOptions {
   baseUrl: string;
   getToken: () => string | Promise<string>;
+  getLocale?: () => SupportedLocale;
   fetch?: typeof globalThis.fetch;
 }
 
 export class SupportClient {
   private readonly baseUrl: string;
   private readonly getToken: SupportClientOptions['getToken'];
+  private readonly getLocale: NonNullable<SupportClientOptions['getLocale']>;
   private readonly request: typeof globalThis.fetch;
 
   constructor(options: SupportClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.getToken = options.getToken;
+    this.getLocale = options.getLocale ?? (() => 'en');
     this.request = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -69,7 +73,7 @@ export class SupportClient {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, locale: this.getLocale() }),
       },
     );
     await this.requireOk(response);

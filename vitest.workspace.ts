@@ -45,6 +45,14 @@ export default defineConfig({
           restoreMocks: true,
         },
       },
+      {
+        root: pathFromRoot('./apps/demo'),
+        test: {
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+          name: 'demo',
+        },
+      },
     ],
   },
 });

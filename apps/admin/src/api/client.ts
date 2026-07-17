@@ -45,6 +45,6 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'The request could not be completed.';
+export function errorMessage(error: unknown, fallback = 'The request could not be completed.'): string {
+  return error instanceof Error ? error.message : fallback;
 }

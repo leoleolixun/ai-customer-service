@@ -499,6 +499,14 @@
         "title": "ConversationCreate",
         "type": "object"
       },
+      "ConversationLocale": {
+        "enum": [
+          "en",
+          "zh-CN"
+        ],
+        "title": "ConversationLocale",
+        "type": "string"
+      },
       "ConversationMode": {
         "enum": [
           "ai",
@@ -1487,6 +1495,10 @@
             "minLength": 1,
             "title": "Content",
             "type": "string"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/ConversationLocale",
+            "default": "en"
           }
         },
         "required": [
