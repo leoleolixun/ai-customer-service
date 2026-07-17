@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
@@ -7,8 +8,10 @@ from fastapi import APIRouter, File, Form, Request, UploadFile, status
 from app.api.dependencies import SessionDependency, StorageDependency, TenantAdminDependency
 from app.core.errors import AppError
 from app.domains.applications.schemas import ApplicationResponse
+from app.domains.knowledge.models import KnowledgeDocument
 from app.domains.knowledge.schemas import (
     DocumentAcceptedResponse,
+    DocumentLifecycleUpdate,
     DocumentResponse,
     IngestionJobResponse,
     KnowledgeBaseCreate,
@@ -206,8 +209,14 @@ async def list_documents(
     storage: StorageDependency,
 ) -> list[DocumentResponse]:
     assert actor.tenant_id is not None
-    items = await DocumentService(session, storage).list(tenant_id=actor.tenant_id, base_id=base_id)
-    return [DocumentResponse.model_validate(item) for item in items]
+    service = DocumentService(session, storage)
+    items = await service.list(tenant_id=actor.tenant_id, base_id=base_id)
+    return await _document_responses(
+        service,
+        tenant_id=actor.tenant_id,
+        base_id=base_id,
+        documents=items,
+    )
 
 
 @router.get(
@@ -223,15 +232,58 @@ async def get_document(
     storage: StorageDependency,
 ) -> DocumentAcceptedResponse:
     assert actor.tenant_id is not None
-    document, job = await DocumentService(session, storage).get(
+    service = DocumentService(session, storage)
+    document, job = await service.get(
         tenant_id=actor.tenant_id,
         base_id=base_id,
         document_id=document_id,
     )
+    document_response = (
+        await _document_responses(
+            service,
+            tenant_id=actor.tenant_id,
+            base_id=base_id,
+            documents=[document],
+        )
+    )[0]
     return DocumentAcceptedResponse(
-        document=DocumentResponse.model_validate(document),
+        document=document_response,
         job=IngestionJobResponse.model_validate(job),
     )
+
+
+@router.patch(
+    "/{base_id}/documents/{document_id}/status",
+    response_model=DocumentResponse,
+    operation_id="updateKnowledgeDocumentStatus",
+)
+async def update_document_status(
+    base_id: UUID,
+    document_id: UUID,
+    body: DocumentLifecycleUpdate,
+    request: Request,
+    actor: TenantAdminDependency,
+    session: SessionDependency,
+    storage: StorageDependency,
+) -> DocumentResponse:
+    assert actor.tenant_id is not None
+    service = DocumentService(session, storage)
+    document = await service.update_lifecycle_status(
+        tenant_id=actor.tenant_id,
+        base_id=base_id,
+        document_id=document_id,
+        target_status=body.status,
+        actor=actor,
+        request_id=request.state.request_id,
+    )
+    return (
+        await _document_responses(
+            service,
+            tenant_id=actor.tenant_id,
+            base_id=base_id,
+            documents=[document],
+        )
+    )[0]
 
 
 @router.post(
@@ -333,3 +385,26 @@ def _enqueue_ingestion(tenant_id: UUID, document_id: UUID) -> None:
                 "Retry ingestion when the worker broker is available."
             ),
         ) from exc
+
+
+async def _document_responses(
+    service: DocumentService,
+    *,
+    tenant_id: UUID,
+    base_id: UUID,
+    documents: Sequence[KnowledgeDocument],
+) -> list[DocumentResponse]:
+    metadata = await service.restore_metadata(
+        tenant_id=tenant_id,
+        base_id=base_id,
+        documents=documents,
+    )
+    return [
+        DocumentResponse.model_validate(document).model_copy(
+            update={
+                "can_restore": metadata[document.id][0],
+                "restore_block_reason": metadata[document.id][1],
+            }
+        )
+        for document in documents
+    ]

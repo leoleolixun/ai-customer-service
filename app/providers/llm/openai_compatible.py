@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -183,9 +184,9 @@ class OpenAICompatibleProvider:
                     extensions=target.extensions,
                 )
                 response.raise_for_status()
-            body = response.json()
-            ordered = sorted(body["data"], key=lambda item: item["index"])
-            return [[float(value) for value in item["embedding"]] for item in ordered]
+            return self._parse_embeddings(
+                response.json(), expected_count=len(texts), dimensions=dimensions
+            )
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise AppError(
                 status_code=502,
@@ -200,6 +201,39 @@ class OpenAICompatibleProvider:
 
     def _request_headers(self, target: PinnedHTTPURL) -> dict[str, str]:
         return {**self._headers, "Host": target.host_header}
+
+    @staticmethod
+    def _parse_embeddings(body: Any, *, expected_count: int, dimensions: int) -> list[list[float]]:
+        if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+            raise TypeError("embedding response data must be a list")
+        data = body["data"]
+        if len(data) != expected_count:
+            raise ValueError("embedding response count does not match the request")
+
+        vectors: dict[int, list[float]] = {}
+        inferred_dimension: int | None = None
+        for item in data:
+            if not isinstance(item, dict):
+                raise TypeError("embedding response item must be an object")
+            index = item.get("index")
+            raw_embedding = item.get("embedding")
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise TypeError("embedding index must be an integer")
+            if index < 0 or index >= expected_count or index in vectors:
+                raise ValueError("embedding indices must be unique and contiguous")
+            if not isinstance(raw_embedding, list) or not raw_embedding:
+                raise TypeError("embedding must be a non-empty list")
+            vector = [float(value) for value in raw_embedding]
+            if not all(math.isfinite(value) for value in vector):
+                raise ValueError("embedding values must be finite")
+            if dimensions > 0 and len(vector) != dimensions:
+                raise ValueError("embedding dimension does not match the model configuration")
+            if inferred_dimension is None:
+                inferred_dimension = len(vector)
+            elif len(vector) != inferred_dimension:
+                raise ValueError("embedding vectors must have one consistent dimension")
+            vectors[index] = vector
+        return [vectors[index] for index in range(expected_count)]
 
     @staticmethod
     def _parse_chunk(data: dict[str, Any]) -> ChatChunk | None:

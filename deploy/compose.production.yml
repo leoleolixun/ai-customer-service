@@ -186,6 +186,23 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  beat:
+    <<: *app-service
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - beat
+      - --schedule=/tmp/celerybeat-schedule
+      - --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
   migrate:
     <<: *app-service
     command:

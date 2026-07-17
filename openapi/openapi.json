@@ -1,6 +1,90 @@
 {
   "components": {
     "schemas": {
+      "AdminConversationPage": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminConversationResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "title": "AdminConversationPage",
+        "type": "object"
+      },
+      "AdminConversationResponse": {
+        "properties": {
+          "application_id": {
+            "format": "uuid",
+            "title": "Application Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "end_user_id": {
+            "format": "uuid",
+            "title": "End User Id",
+            "type": "string"
+          },
+          "external_user_id": {
+            "title": "External User Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ConversationMode"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "application_id",
+          "end_user_id",
+          "external_user_id",
+          "mode",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AdminConversationResponse",
+        "type": "object"
+      },
       "AdminFeedbackResponse": {
         "properties": {
           "application_id": {
@@ -145,6 +229,108 @@
           "role"
         ],
         "title": "AdminMeResponse",
+        "type": "object"
+      },
+      "AdminMessagePage": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminMessageResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "title": "AdminMessagePage",
+        "type": "object"
+      },
+      "AdminMessageResponse": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationResponse"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_info": {
+            "additionalProperties": true,
+            "title": "Model Info",
+            "type": "object"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/MessageSender"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MessageStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "sender",
+          "content",
+          "status",
+          "error_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AdminMessageResponse",
         "type": "object"
       },
       "AdminTokenResponse": {
@@ -760,11 +946,33 @@
         "title": "DocumentAcceptedResponse",
         "type": "object"
       },
+      "DocumentLifecycleUpdate": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DocumentLifecycleUpdate",
+        "type": "object"
+      },
       "DocumentResponse": {
         "properties": {
           "byte_size": {
             "title": "Byte Size",
             "type": "integer"
+          },
+          "can_restore": {
+            "default": false,
+            "title": "Can Restore",
+            "type": "boolean"
           },
           "content_hash": {
             "title": "Content Hash",
@@ -799,6 +1007,21 @@
           "mime_type": {
             "title": "Mime Type",
             "type": "string"
+          },
+          "restore_block_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "document_restore_base_disabled",
+                  "document_restore_version_conflict"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore Block Reason"
           },
           "source_filename": {
             "title": "Source Filename",
@@ -3359,6 +3582,251 @@
         ]
       }
     },
+    "/v1/admin/conversations": {
+      "get": {
+        "operationId": "listAdminConversations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return conversations older than this ID",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return conversations older than this ID",
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "application_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Application Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ConversationStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ConversationMode"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConversationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Admin Conversations",
+        "tags": [
+          "admin-conversations"
+        ]
+      }
+    },
+    "/v1/admin/conversations/{conversation_id}": {
+      "get": {
+        "operationId": "getAdminConversation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Admin Conversation",
+        "tags": [
+          "admin-conversations"
+        ]
+      }
+    },
+    "/v1/admin/conversations/{conversation_id}/messages": {
+      "get": {
+        "operationId": "listAdminConversationMessages",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return messages older than this ID",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return messages older than this ID",
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminMessagePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Admin Conversation Messages",
+        "tags": [
+          "admin-conversations"
+        ]
+      }
+    },
     "/v1/admin/feedback": {
       "get": {
         "operationId": "listConversationFeedback",
@@ -4268,6 +4736,74 @@
           }
         ],
         "summary": "Retry Document",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/v1/admin/knowledge-bases/{base_id}/documents/{document_id}/status": {
+      "patch": {
+        "operationId": "updateKnowledgeDocumentStatus",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "base_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Base Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentLifecycleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Document Status",
         "tags": [
           "knowledge-bases"
         ]

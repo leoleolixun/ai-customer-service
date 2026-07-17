@@ -33,9 +33,25 @@ export function formatMessage(template: string, values: MessageValues = {}): str
   });
 }
 
+export function readStoredLanguage(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(LANGUAGE_STORAGE_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistLanguage(language: Language): void {
+  try {
+    globalThis.localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // The active page still switches when browser storage is unavailable.
+  }
+}
+
 export const I18nProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => resolveInitialLanguage(
-    localStorage.getItem(LANGUAGE_STORAGE_KEY),
+    readStoredLanguage(),
     navigator.language,
   ));
 
@@ -45,7 +61,7 @@ export const I18nProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   }, [language]);
 
   const setLanguage = useCallback((nextLanguage: Language) => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+    persistLanguage(nextLanguage);
     document.documentElement.lang = nextLanguage;
     setLanguageState(nextLanguage);
   }, []);

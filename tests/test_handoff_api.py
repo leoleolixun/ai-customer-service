@@ -88,7 +88,7 @@ async def test_handoff_pauses_ai_has_single_owner_and_closes_conversation(
     )
     assert requested.status_code == 201, requested.text
     assert requested.json()["status"] == "pending"
-    assert "Customer: I cannot update my account" in requested.json()["summary"]
+    assert "user: I cannot update my account" in requested.json()["summary"]
     handoff_id = requested.json()["id"]
 
     duplicate = await client.post(

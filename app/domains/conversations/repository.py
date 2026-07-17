@@ -94,6 +94,76 @@ class ConversationRepository:
             return None
         return row[0], row[1]
 
+    async def get_conversation_for_staff(
+        self, *, tenant_id: UUID, conversation_id: UUID
+    ) -> tuple[Conversation, EndUser] | None:
+        statement = (
+            select(Conversation, EndUser)
+            .join(
+                EndUser,
+                (EndUser.id == Conversation.end_user_id)
+                & (EndUser.tenant_id == Conversation.tenant_id),
+            )
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.tenant_id == tenant_id,
+                EndUser.tenant_id == tenant_id,
+            )
+        )
+        return (await self.session.execute(statement)).tuples().one_or_none()
+
+    async def get_conversation_cursor(
+        self, *, tenant_id: UUID, conversation_id: UUID
+    ) -> Conversation | None:
+        statement = select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.tenant_id == tenant_id,
+        )
+        return cast(Conversation | None, await self.session.scalar(statement))
+
+    async def list_conversations_for_staff(
+        self,
+        *,
+        tenant_id: UUID,
+        limit: int,
+        before: Conversation | None = None,
+        application_id: UUID | None = None,
+        status: ConversationStatus | None = None,
+        mode: ConversationMode | None = None,
+    ) -> list[tuple[Conversation, EndUser]]:
+        statement = (
+            select(Conversation, EndUser)
+            .join(
+                EndUser,
+                (EndUser.id == Conversation.end_user_id)
+                & (EndUser.tenant_id == Conversation.tenant_id),
+            )
+            .where(
+                Conversation.tenant_id == tenant_id,
+                EndUser.tenant_id == tenant_id,
+            )
+            .order_by(Conversation.created_at.desc(), Conversation.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            statement = statement.where(
+                or_(
+                    Conversation.created_at < before.created_at,
+                    and_(
+                        Conversation.created_at == before.created_at,
+                        Conversation.id < before.id,
+                    ),
+                )
+            )
+        if application_id is not None:
+            statement = statement.where(Conversation.application_id == application_id)
+        if status is not None:
+            statement = statement.where(Conversation.status == status)
+        if mode is not None:
+            statement = statement.where(Conversation.mode == mode)
+        rows = (await self.session.execute(statement)).tuples().all()
+        return [(conversation, end_user) for conversation, end_user in rows]
+
     async def list_messages(
         self,
         *,

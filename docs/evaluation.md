@@ -8,7 +8,8 @@
 V1.0 固定资产：
 
 - `eval/rag_v1.jsonl`：150 条评估问题。
-- `eval/knowledge_sources_v1.jsonl`：22 个中立演示知识源，包括两个互相隔离的租户。
+- `eval/knowledge_sources_v1.jsonl`：24 个中立演示知识源，包括两个互相隔离的租户和两个仅用于验证
+  间接 Prompt Injection 防护的恶意知识样本。
 - `eval/generate_v1_dataset.py`：确定性生成器，用于审查固定数据的来源。
 - `scripts/evaluate_rag.py`：完整性检查和指标计算器。
 

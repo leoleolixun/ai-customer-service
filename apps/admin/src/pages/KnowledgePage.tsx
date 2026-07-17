@@ -1,4 +1,4 @@
-import { AppWindow, FileUp, Link2, Plus, RefreshCw, Repeat2, Search, Settings2, Trash2 } from 'lucide-react';
+import { AppWindow, CirclePause, FileUp, Link2, Plus, RefreshCw, Repeat2, RotateCcw, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   Alert,
   Box,
@@ -31,7 +31,7 @@ import {
 import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import React, { Suspense, useCallback, useState } from 'react';
 
-import { api, errorMessage } from '@/api/client';
+import { api, ApiError, errorMessage } from '@/api/client';
 import type {
   Application,
   KnowledgeBase,
@@ -125,7 +125,7 @@ const KnowledgePage: React.FC = () => {
 const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
   const { format, labelValue, language, messages } = useI18n();
   const queryClient = useQueryClient();
-  const { data: documents = [] } = useQuery({
+  const { data: documents = [], error: documentsError } = useQuery({
     queryKey: ['knowledge-documents', base.id],
     queryFn: () => api<KnowledgeDocument[]>(`/v1/admin/knowledge-bases/${base.id}/documents`),
     refetchInterval: (query) => query.state.data?.some((item) => ['uploaded', 'processing'].includes(item.status)) ? 2000 : false,
@@ -134,7 +134,7 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
     queryKey: ['applications'],
     queryFn: () => api<Application[]>('/v1/admin/applications'),
   });
-  const { data: boundApplications = [] } = useQuery({
+  const { data: boundApplications = [], error: boundApplicationsError } = useQuery({
     queryKey: ['knowledge-base-applications', base.id],
     queryFn: () => api<Application[]>(`/v1/admin/knowledge-bases/${base.id}/applications`),
   });
@@ -199,6 +199,24 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
     }
   }, [base.id, messages.common.requestFailed, queryClient]);
 
+  const updateDocumentStatus = useCallback(async (document: KnowledgeDocument) => {
+    const status = document.status === 'ready' ? 'disabled' : 'ready';
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/admin/knowledge-bases/${base.id}/documents/${document.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      setResults([]);
+      await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
+    } catch (cause) {
+      setError(errorMessage(cause, messages.common.requestFailed));
+    } finally {
+      setBusy(false);
+    }
+  }, [base.id, messages.common.requestFailed, queryClient]);
+
   const deleteDocument = useCallback(async () => {
     if (!deleting) return;
     setBusy(true);
@@ -209,6 +227,10 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
       await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
     } catch (cause) {
       setError(errorMessage(cause, messages.common.requestFailed));
+      if (cause instanceof ApiError && cause.code === 'object_storage_delete_failed') {
+        setDeleting(null);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['knowledge-documents', base.id] });
     } finally {
       setBusy(false);
     }
@@ -310,15 +332,25 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
               <Settings2 size={17} />
             </IconButton>
           </Tooltip>
-          <Button startIcon={<Link2 size={15} />} disabled={boundApplications.length === applications.length} onClick={() => setBindOpen(true)}>{messages.knowledge.bindApp}</Button>
-          <Button variant="contained" startIcon={<FileUp size={15} />} onClick={() => openUpload()}>{messages.knowledge.upload}</Button>
+          <Button startIcon={<Link2 size={15} />} disabled={Boolean(boundApplicationsError) || boundApplications.length === applications.length} onClick={() => setBindOpen(true)}>{messages.knowledge.bindApp}</Button>
+          <Button variant="contained" startIcon={<FileUp size={15} />} disabled={Boolean(documentsError)} onClick={() => openUpload()}>{messages.knowledge.upload}</Button>
         </Box>
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {documentsError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {errorMessage(documentsError, messages.knowledge.documentsLoadFailed)}
+        </Alert>
+      )}
+      {boundApplicationsError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {errorMessage(boundApplicationsError, messages.knowledge.bindingsLoadFailed)}
+        </Alert>
+      )}
       <Box sx={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
         <Typography color="text.secondary" fontSize={12}>{messages.knowledge.boundApplications}</Typography>
-        {boundApplications.map((application) => <Chip key={application.id} label={application.name} size="small" disabled={busy} onDelete={() => void unbind(application.id)} />)}
-        {boundApplications.length === 0 && <Typography color="text.secondary" fontSize={12}>{messages.common.none}</Typography>}
+        {boundApplications.map((application) => <Chip key={application.id} label={application.name} size="small" disabled={busy || Boolean(boundApplicationsError)} onDelete={() => void unbind(application.id)} />)}
+        {!boundApplicationsError && boundApplications.length === 0 && <Typography color="text.secondary" fontSize={12}>{messages.common.none}</Typography>}
       </Box>
       <TableContainer sx={{ border: 1, borderColor: 'divider', borderRadius: 1 }}>
         <Table size="small">
@@ -326,17 +358,25 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
           <TableBody>
             {documents.map((document) => {
               const processing = ['uploaded', 'processing'].includes(document.status);
+              const restoreAllowed = document.can_restore;
+              const restoreTooltip = restoreAllowed
+                ? messages.knowledge.restoreDocument
+                : document.restore_block_reason === 'document_restore_base_disabled'
+                  ? messages.knowledge.restoreBlockedByBase
+                  : messages.knowledge.restoreBlockedByVersion;
               return (
                 <TableRow key={document.id}>
-                  <TableCell><Typography fontSize={13} fontWeight={650}>{document.title}</Typography><Typography color="text.secondary" fontSize={11}>{document.source_filename}</Typography>{document.error_message && <Typography color="error.main" fontSize={11}>{document.error_message}</Typography>}</TableCell>
+                  <TableCell><Typography fontSize={13} fontWeight={650}>{document.title}</Typography><Typography color="text.secondary" fontSize={11}>{document.source_filename}</Typography>{document.status === 'failed' && <Typography color="error.main" fontSize={11}>{messages.knowledge.ingestionFailed}</Typography>}</TableCell>
                   <TableCell>{format(messages.knowledge.documentVersion, { version: document.version })}</TableCell>
                   <TableCell>{format(messages.knowledge.documentSize, { size: Math.ceil(document.byte_size / 1024) })}</TableCell>
                   <TableCell><Chip size="small" color={document.status === 'ready' ? 'success' : document.status === 'failed' ? 'error' : 'default'} label={labelValue(document.status)} /></TableCell>
                   <TableCell>{new Date(document.updated_at).toLocaleString(language)}</TableCell>
-                  <TableCell align="right" sx={{ whiteSpace: 'nowrap', width: 112 }}>
-                    <Tooltip title={messages.knowledge.uploadReplacement}><span><IconButton size="small" disabled={processing || busy} aria-label={format(messages.knowledge.replaceAria, { name: document.title })} onClick={() => openUpload(document)}><Repeat2 size={15} /></IconButton></span></Tooltip>
-                    {document.status === 'failed' && <Tooltip title={messages.knowledge.retryIngestion}><span><IconButton size="small" disabled={busy} aria-label={format(messages.knowledge.retryAria, { name: document.title })} onClick={() => void retry(document)}><RefreshCw size={15} /></IconButton></span></Tooltip>}
-                    <Tooltip title={messages.knowledge.deleteDocument}><span><IconButton size="small" color="error" disabled={processing || busy} aria-label={format(messages.knowledge.deleteAria, { name: document.title })} onClick={() => setDeleting(document)}><Trash2 size={15} /></IconButton></span></Tooltip>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap', width: 144 }}>
+                    <Tooltip title={messages.knowledge.uploadReplacement}><span><IconButton size="small" disabled={processing || busy || Boolean(documentsError)} aria-label={format(messages.knowledge.replaceAria, { name: document.title })} onClick={() => openUpload(document)}><Repeat2 size={15} /></IconButton></span></Tooltip>
+                    {document.status === 'failed' && <Tooltip title={messages.knowledge.retryIngestion}><span><IconButton size="small" disabled={busy || Boolean(documentsError)} aria-label={format(messages.knowledge.retryAria, { name: document.title })} onClick={() => void retry(document)}><RefreshCw size={15} /></IconButton></span></Tooltip>}
+                    {document.status === 'ready' && <Tooltip title={messages.knowledge.disableDocument}><span><IconButton size="small" disabled={busy || Boolean(documentsError)} aria-label={format(messages.knowledge.disableAria, { name: document.title })} onClick={() => void updateDocumentStatus(document)}><CirclePause size={15} /></IconButton></span></Tooltip>}
+                    {document.status === 'disabled' && <Tooltip title={restoreTooltip}><span><IconButton size="small" disabled={busy || Boolean(documentsError) || !restoreAllowed} aria-label={format(messages.knowledge.restoreAria, { name: document.title })} onClick={() => void updateDocumentStatus(document)}><RotateCcw size={15} /></IconButton></span></Tooltip>}
+                    <Tooltip title={messages.knowledge.deleteDocument}><span><IconButton size="small" color="error" disabled={processing || busy || Boolean(documentsError)} aria-label={format(messages.knowledge.deleteAria, { name: document.title })} onClick={() => setDeleting(document)}><Trash2 size={15} /></IconButton></span></Tooltip>
                   </TableCell>
                 </TableRow>
               );

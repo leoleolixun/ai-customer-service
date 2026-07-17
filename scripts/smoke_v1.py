@@ -311,6 +311,16 @@ async def run(base_url: str, password: str) -> None:
                 raise RuntimeError(
                     f"cross-tenant conversation access returned {cross_tenant.status_code}"
                 )
+            cross_tenant_source = await client.get(
+                f"/v1/chat/sessions/{runs[1].conversation_id}/citations/"
+                f"{runs[1].citation_id}/source",
+                headers={"Authorization": f"Bearer {runs[0].customer_token}"},
+            )
+            if cross_tenant_source.status_code != 404:
+                raise RuntimeError(
+                    "cross-tenant citation source access returned "
+                    f"{cross_tenant_source.status_code}"
+                )
             print(
                 json.dumps(
                     {
@@ -325,6 +335,7 @@ async def run(base_url: str, password: str) -> None:
                             "no_answer_refusal",
                             "human_handoff",
                             "cross_tenant_isolation",
+                            "cross_tenant_citation_source_isolation",
                         ],
                     },
                     ensure_ascii=False,

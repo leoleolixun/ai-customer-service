@@ -6,6 +6,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import LoginPage from './LoginPage';
+import { ApiError } from '@/api/client';
 import { I18nProvider, LANGUAGE_STORAGE_KEY } from '@/i18n/I18nProvider';
 
 const mocks = vi.hoisted(() => ({
@@ -51,7 +52,7 @@ describe('LoginPage', () => {
   });
 
   it('renders an accessible error and re-enables submission after login fails', async () => {
-    mocks.login.mockRejectedValue(new Error('Invalid credentials'));
+    mocks.login.mockRejectedValue(new ApiError(401, 'invalid_credentials', 'Invalid credentials'));
     const user = userEvent.setup();
     render(<I18nProvider><LoginPage /></I18nProvider>);
 
@@ -59,7 +60,7 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText(/^Password/), 'wrong-password');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid credentials');
+    expect(await screen.findByRole('alert')).toHaveTextContent('The email or password is incorrect.');
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
     expect(mocks.navigate).not.toHaveBeenCalled();
   });

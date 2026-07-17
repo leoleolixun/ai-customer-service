@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.admin_auth import router as admin_auth_router
 from app.api.v1.applications import router as applications_router
+from app.api.v1.conversations import admin_router as admin_conversations_router
 from app.api.v1.conversations import router as conversations_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.handoffs import admin_router as admin_handoffs_router
@@ -17,6 +18,7 @@ router.include_router(platform_router)
 router.include_router(admin_auth_router)
 router.include_router(applications_router)
 router.include_router(conversations_router)
+router.include_router(admin_conversations_router)
 router.include_router(feedback_router)
 router.include_router(customer_handoffs_router)
 router.include_router(admin_handoffs_router)

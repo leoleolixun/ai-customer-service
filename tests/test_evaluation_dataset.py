@@ -103,7 +103,7 @@ def test_fixed_v1_dataset_meets_distribution_and_integrity_rules() -> None:
     assert summary == {
         "dataset_version": "1.0.0",
         "case_count": 150,
-        "source_count": 22,
+        "source_count": 24,
         "category_counts": {
             "answerable": 90,
             "conflict_or_stale": 10,

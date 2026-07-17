@@ -12,19 +12,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.core.security import CustomerPrincipal
+from app.core.security import CustomerPrincipal, StaffPrincipal
 from app.domains.audit.repository import AuditRepository
 from app.domains.conversations.models import (
     Conversation,
     ConversationMode,
     ConversationStatus,
+    EndUser,
     Message,
     MessageSender,
     MessageStatus,
 )
 from app.domains.conversations.repository import ConversationRepository
 from app.domains.conversations.schemas import (
+    AdminConversationPage,
+    AdminConversationResponse,
     AdminFeedbackResponse,
+    AdminMessagePage,
+    AdminMessageResponse,
     ConversationLocale,
     FeedbackCreate,
     FeedbackResponse,
@@ -59,6 +64,11 @@ SECURITY_REFUSAL_RESPONSE = (
     "I can't provide hidden instructions, credentials, or data from another tenant or user. "
     "Please ask about information available to this support application."
 )
+UNSAFE_EVIDENCE_RESPONSE = (
+    "I can't use the retrieved source because it contains instructions that could override "
+    "security boundaries or expose protected information. Please contact a human support agent "
+    "for confirmation."
+)
 CONFLICT_RESPONSE = (
     "The available sources conflict, so I can't confirm which statement is current. "
     "Please contact a human support agent before relying on either version."
@@ -77,6 +87,7 @@ LOCALIZED_REFUSALS = {
         "no_evidence": NO_EVIDENCE_RESPONSE,
         "human_required": HUMAN_REQUIRED_RESPONSE,
         "security_refusal": SECURITY_REFUSAL_RESPONSE,
+        "unsafe_evidence": UNSAFE_EVIDENCE_RESPONSE,
         "conflicting_evidence": CONFLICT_RESPONSE,
     },
     ConversationLocale.ZH_CN: {
@@ -87,12 +98,60 @@ LOCALIZED_REFUSALS = {
         "security_refusal": (
             "我无法提供隐藏指令、凭据或其他租户、其他用户的数据。请询问当前客服应用可以提供的信息。"
         ),
+        "unsafe_evidence": (
+            "检索到的资料包含可能绕过安全边界或泄露受保护信息的指令，"  # noqa: RUF001
+            "我无法使用该资料回答。请联系人工客服确认。"
+        ),
         "conflicting_evidence": (
             "现有资料存在冲突，我无法确认哪一项是最新信息。请联系人工客服后再作判断。"  # noqa: RUF001
         ),
     },
 }
 RELATIVE_EVIDENCE_SCORE_FLOOR = 0.9
+INDIRECT_PROMPT_INJECTION_PATTERNS = (
+    re.compile(
+        r"(?:^|[\n.!?;\u3002\uff01\uff1f\uff1b]\s*)(?:[-*]\s*)?"
+        r"(?:(?:important|instruction|system|assistant)\s*:\s*)?"
+        r"(?:please\s+|you\s+must\s+)?"
+        r"(?:ignore|disregard|override|bypass|forget)\b"
+        r"[^\n.!?;\u3002\uff01\uff1f\uff1b]{0,80}"
+        r"\b(?:instructions?|prompts?|rules?|safety|security|tenant\s+boundar(?:y|ies))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[\n.!?;\u3002\uff01\uff1f\uff1b]\s*)(?:[-*]\s*)?"
+        r"(?:please\s+|you\s+must\s+)?"
+        r"(?:reveal|show|print|expose|leak|return|provide|send)\s+"
+        r"(?:the\s+|all\s+|any\s+)?"
+        r"(?:system\s+prompt|developer\s+instructions?|api\s+keys?|database\s+passwords?|"
+        r"credentials?|secrets?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[\n.!?;\u3002\uff01\uff1f\uff1b]\s*)(?:[-*]\s*)?"
+        r"(?:please\s+|you\s+must\s+)?"
+        r"(?:list|return|show|provide|expose)\s+(?:all\s+)?"
+        r"(?:another|other)\s+(?:tenant|user)(?:'s)?\s+"
+        r"(?:data|records?|documents?|credentials?|secrets?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[\n.!?;\u3002\uff01\uff1f\uff1b]\s*)(?:[-*]\s*)?"
+        r"(?:(?:重要|指令|系统(?:指令)?|开发者指令)\s*[:\uff1a]\s*)?"
+        r"(?:请|必须|立即|现在)?\s*(?:忽略|无视|绕过|覆盖|跳过)"
+        r"[^\n.!?;\u3002\uff01\uff1f\uff1b]{0,40}"
+        r"(?:指令|规则|提示词|安全限制|租户边界)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[\n.!?;\u3002\uff01\uff1f\uff1b]\s*)(?:[-*]\s*)?"
+        r"(?:请|必须|立即|现在)?\s*(?:输出|显示|打印|泄露|返回|提供|列出|发送)\s*"
+        r"(?:完整的|全部|所有)?\s*"
+        r"(?:系统提示词|开发者指令|内部\s*api\s*key|api\s*key|数据库密码|密钥|凭据|"
+        r"其他租户数据|另一个租户的数据|其他用户数据)",
+        re.IGNORECASE,
+    ),
+)
 
 
 class FeedbackService:
@@ -158,6 +217,166 @@ class FeedbackService:
             )
             for feedback, message in rows
         ]
+
+
+class AdminConversationService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.repository = ConversationRepository(session)
+        self.knowledge = KnowledgeRepository(session)
+
+    async def list_conversations(
+        self,
+        *,
+        actor: StaffPrincipal,
+        limit: int,
+        before_id: UUID | None,
+        application_id: UUID | None,
+        status: ConversationStatus | None,
+        mode: ConversationMode | None,
+    ) -> AdminConversationPage:
+        tenant_id = self._tenant_id(actor)
+        before = None
+        if before_id is not None:
+            before = await self.repository.get_conversation_cursor(
+                tenant_id=tenant_id,
+                conversation_id=before_id,
+            )
+            if before is None:
+                raise AppError(
+                    status_code=400,
+                    code="conversation_cursor_invalid",
+                    title="Invalid conversation cursor",
+                    detail="The before cursor does not belong to this tenant.",
+                )
+        rows = await self.repository.list_conversations_for_staff(
+            tenant_id=tenant_id,
+            limit=limit + 1,
+            before=before,
+            application_id=application_id,
+            status=status,
+            mode=mode,
+        )
+        has_more = len(rows) > limit
+        visible_rows = rows[:limit]
+        items = [
+            self._conversation_response(conversation, end_user)
+            for conversation, end_user in visible_rows
+        ]
+        return AdminConversationPage(
+            items=items,
+            next_cursor=items[-1].id if has_more and items else None,
+            has_more=has_more,
+        )
+
+    async def get(
+        self, *, actor: StaffPrincipal, conversation_id: UUID
+    ) -> AdminConversationResponse:
+        tenant_id = self._tenant_id(actor)
+        row = await self.repository.get_conversation_for_staff(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+        )
+        if row is None:
+            self._raise_not_found()
+        conversation, end_user = row
+        return self._conversation_response(conversation, end_user)
+
+    async def list_messages(
+        self,
+        *,
+        actor: StaffPrincipal,
+        conversation_id: UUID,
+        limit: int,
+        before_id: UUID | None,
+    ) -> AdminMessagePage:
+        tenant_id = self._tenant_id(actor)
+        if (
+            await self.repository.get_conversation_for_staff(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+            )
+            is None
+        ):
+            self._raise_not_found()
+        before = None
+        if before_id is not None:
+            before = await self.repository.get_message_cursor(
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                message_id=before_id,
+            )
+            if before is None:
+                raise AppError(
+                    status_code=400,
+                    code="message_cursor_invalid",
+                    title="Invalid message cursor",
+                    detail="The before cursor does not belong to this conversation.",
+                )
+        messages = await self.repository.list_messages(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            limit=limit + 1,
+            before=before,
+        )
+        has_more = len(messages) > limit
+        visible_messages = messages[1:] if has_more else messages
+        citations = await self.knowledge.list_citations_for_messages(
+            tenant_id=tenant_id,
+            message_ids=[message.id for message in visible_messages],
+        )
+        by_message: dict[UUID, list[Citation]] = {}
+        for citation in citations:
+            by_message.setdefault(citation.message_id, []).append(citation)
+        items = [
+            self._message_response(message, by_message.get(message.id, []))
+            for message in visible_messages
+        ]
+        return AdminMessagePage(
+            items=items,
+            next_cursor=items[0].id if has_more and items else None,
+            has_more=has_more,
+        )
+
+    @staticmethod
+    def _conversation_response(
+        conversation: Conversation, end_user: EndUser
+    ) -> AdminConversationResponse:
+        return AdminConversationResponse(
+            id=conversation.id,
+            application_id=conversation.application_id,
+            end_user_id=conversation.end_user_id,
+            external_user_id=str(end_user.external_user_id),
+            mode=conversation.mode,
+            status=conversation.status,
+            created_at=conversation.created_at,
+            updated_at=conversation.updated_at,
+        )
+
+    @staticmethod
+    def _message_response(message: Message, citations: list[Citation]) -> AdminMessageResponse:
+        return AdminMessageResponse.model_validate(message).model_copy(
+            update={"citations": [CitationResponse.model_validate(item) for item in citations]}
+        )
+
+    @staticmethod
+    def _tenant_id(actor: StaffPrincipal) -> UUID:
+        if actor.tenant_id is None:
+            raise AppError(
+                status_code=403,
+                code="tenant_staff_required",
+                title="Forbidden",
+                detail="A tenant administrator or agent session is required.",
+            )
+        return actor.tenant_id
+
+    @staticmethod
+    def _raise_not_found() -> NoReturn:
+        raise AppError(
+            status_code=404,
+            code="conversation_not_found",
+            title="Conversation not found",
+            detail="The requested conversation does not exist in this tenant.",
+        )
 
 
 @dataclass(slots=True)
@@ -368,12 +587,16 @@ class ConversationService:
                 top_k=5,
             )
             eligible_evidence = self._eligible_evidence(retrieved)
-            conflicting_evidence = self._conflicting_evidence(content, eligible_evidence)
-            if conflicting_evidence:
-                evidence = conflicting_evidence
-                grounding_status = "conflicting_evidence"
+            if self._contains_indirect_prompt_injection(eligible_evidence):
+                evidence = []
+                grounding_status = "unsafe_evidence"
             else:
-                evidence = self._evidence_gate(eligible_evidence)
+                conflicting_evidence = self._conflicting_evidence(content, eligible_evidence)
+                if conflicting_evidence:
+                    evidence = conflicting_evidence
+                    grounding_status = "conflicting_evidence"
+                else:
+                    evidence = self._evidence_gate(eligible_evidence)
         previous = await self.repository.get_recent_completed_messages(
             tenant_id=principal.tenant_id, conversation_id=conversation.id
         )
@@ -723,6 +946,14 @@ class ConversationService:
                 >= best_vector_similarity * RELATIVE_EVIDENCE_SCORE_FLOOR
             )
         ][:5]
+
+    @staticmethod
+    def _contains_indirect_prompt_injection(results: list[RetrievedChunk]) -> bool:
+        for result in results:
+            candidate = f"{result.document.title}\n{result.chunk.content}"
+            if any(pattern.search(candidate) for pattern in INDIRECT_PROMPT_INJECTION_PATTERNS):
+                return True
+        return False
 
     @staticmethod
     def _requires_human(content: str) -> bool:

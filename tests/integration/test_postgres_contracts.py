@@ -24,6 +24,7 @@ from app.domains.handoffs.models import HandoffRequest, HandoffStatus
 from app.domains.handoffs.service import AgentHandoffService, CustomerHandoffService
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
 from app.domains.knowledge.models import (
+    ChunkStatus,
     DocumentStatus,
     KnowledgeBase,
     KnowledgeChunk,
@@ -440,6 +441,70 @@ async def test_postgres_serializes_duplicate_document_ingestion_locks(
             await second_session.execute(
                 text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
             )
+
+
+async def test_postgres_serializes_concurrent_document_object_cleanup(
+    postgres_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class BlockingStorage(MemoryObjectStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delete_started = asyncio.Event()
+            self.release_delete = asyncio.Event()
+            self.delete_calls = 0
+
+        async def delete(self, key: str) -> None:
+            self.delete_calls += 1
+            self.delete_started.set()
+            await self.release_delete.wait()
+            await super().delete(key)
+
+    storage = BlockingStorage()
+    async with postgres_session_factory() as session:
+        tenant, knowledge_base = await _create_search_fixture(
+            session,
+            slug="cleanup-lock",
+            content="cleanup object lock",
+            vector=[1.0, 0.0, 0.0],
+        )
+        document = await session.scalar(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.tenant_id == tenant.id,
+                KnowledgeDocument.knowledge_base_id == knowledge_base.id,
+            )
+        )
+        assert document is not None
+        await storage.put(document.object_key, b"cleanup object lock", "text/plain")
+        await KnowledgeRepository(session).mark_document_deleted(document)
+        await session.commit()
+        document_id = document.id
+
+    async def cleanup() -> dict[str, int]:
+        async with postgres_session_factory() as session:
+            return await DocumentService(session, storage).cleanup_pending_objects()
+
+    first = asyncio.create_task(cleanup())
+    await asyncio.wait_for(storage.delete_started.wait(), timeout=2)
+    second = asyncio.create_task(cleanup())
+    await asyncio.sleep(0.1)
+    storage.release_delete.set()
+    results = await asyncio.gather(first, second)
+
+    assert [result["selected"] for result in results] == [1, 1]
+    assert storage.delete_calls == 1
+    assert document.object_key not in storage.objects
+    async with postgres_session_factory() as session:
+        cleaned_document = await session.get(KnowledgeDocument, document_id)
+        chunk_statuses = list(
+            await session.scalars(
+                select(KnowledgeChunk.status).where(
+                    KnowledgeChunk.document_id == document_id,
+                )
+            )
+        )
+    assert cleaned_document is not None
+    assert cleaned_document.object_cleanup_pending is False
+    assert chunk_statuses == [ChunkStatus.DISABLED]
 
 
 async def _create_chat_idempotency_fixture(

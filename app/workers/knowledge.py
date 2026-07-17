@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import engine
 from app.core.storage import get_object_storage
-from app.domains.knowledge.service import IngestionService
+from app.domains.knowledge.service import DocumentService, IngestionService
 from app.workers.celery_app import celery_app
 
 
@@ -21,6 +21,19 @@ from app.workers.celery_app import celery_app
 )  # type: ignore[untyped-decorator]
 def ingest_knowledge_document(tenant_id: str, document_id: str) -> None:
     asyncio.run(_ingest(UUID(tenant_id), UUID(document_id)))
+
+
+@celery_app.task(name="knowledge.cleanup_deleted_objects")  # type: ignore[untyped-decorator]
+def cleanup_deleted_knowledge_objects() -> dict[str, int]:
+    return asyncio.run(_cleanup_deleted_objects())
+
+
+async def _cleanup_deleted_objects() -> dict[str, int]:
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            return await DocumentService(session, get_object_storage()).cleanup_pending_objects()
+    finally:
+        await engine.dispose()
 
 
 async def _ingest(tenant_id: UUID, document_id: UUID) -> None:

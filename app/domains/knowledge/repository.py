@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.applications.models import Application
@@ -79,6 +79,17 @@ class KnowledgeRepository:
         statement = select(KnowledgeBase).where(
             KnowledgeBase.id == base_id,
             KnowledgeBase.tenant_id == tenant_id,
+        )
+        return cast(KnowledgeBase | None, await self.session.scalar(statement))
+
+    async def get_base_for_update(self, *, tenant_id: UUID, base_id: UUID) -> KnowledgeBase | None:
+        statement = (
+            select(KnowledgeBase)
+            .where(
+                KnowledgeBase.id == base_id,
+                KnowledgeBase.tenant_id == tenant_id,
+            )
+            .with_for_update()
         )
         return cast(KnowledgeBase | None, await self.session.scalar(statement))
 
@@ -254,6 +265,29 @@ class KnowledgeRepository:
         )
         return cast(KnowledgeDocument | None, await self.session.scalar(statement))
 
+    async def list_version_documents(
+        self, *, tenant_id: UUID, base_id: UUID
+    ) -> list[KnowledgeDocument]:
+        statement = select(KnowledgeDocument).where(
+            KnowledgeDocument.tenant_id == tenant_id,
+            KnowledgeDocument.knowledge_base_id == base_id,
+        )
+        return list(await self.session.scalars(statement))
+
+    async def list_document_chunks(
+        self, *, tenant_id: UUID, base_id: UUID, document_id: UUID
+    ) -> list[KnowledgeChunk]:
+        statement = (
+            select(KnowledgeChunk)
+            .where(
+                KnowledgeChunk.tenant_id == tenant_id,
+                KnowledgeChunk.knowledge_base_id == base_id,
+                KnowledgeChunk.document_id == document_id,
+            )
+            .order_by(KnowledgeChunk.chunk_index)
+        )
+        return list(await self.session.scalars(statement))
+
     async def get_job(self, *, tenant_id: UUID, document_id: UUID) -> IngestionJob | None:
         statement = select(IngestionJob).where(
             IngestionJob.tenant_id == tenant_id,
@@ -370,15 +404,50 @@ class KnowledgeRepository:
     async def mark_ingestion_completed(
         self, document: KnowledgeDocument, job: IngestionJob
     ) -> None:
+        await self.get_base_for_update(
+            tenant_id=document.tenant_id,
+            base_id=document.knowledge_base_id,
+        )
         if document.supersedes_document_id is not None:
             previous = await self.session.get(KnowledgeDocument, document.supersedes_document_id)
-            if previous is not None and previous.tenant_id == document.tenant_id:
-                previous.status = DocumentStatus.DISABLED
+            if (
+                previous is not None
+                and previous.tenant_id == document.tenant_id
+                and previous.knowledge_base_id == document.knowledge_base_id
+                and previous.status != DocumentStatus.DELETED
+            ):
+                await self.set_document_retrieval_status(
+                    previous,
+                    status=DocumentStatus.DISABLED,
+                )
         document.status = DocumentStatus.READY
         document.error_message = None
         job.status = IngestionStatus.COMPLETED
         job.stage = "published"
         job.error_message = None
+        await self.session.flush()
+
+    async def set_document_retrieval_status(
+        self,
+        document: KnowledgeDocument,
+        *,
+        status: DocumentStatus,
+    ) -> None:
+        if status not in {DocumentStatus.READY, DocumentStatus.DISABLED}:
+            raise ValueError("document retrieval status must be ready or disabled")
+        document.status = status
+        chunk_status = (
+            ChunkStatus.ACTIVE if status == DocumentStatus.READY else ChunkStatus.DISABLED
+        )
+        await self.session.execute(
+            update(KnowledgeChunk)
+            .where(
+                KnowledgeChunk.tenant_id == document.tenant_id,
+                KnowledgeChunk.knowledge_base_id == document.knowledge_base_id,
+                KnowledgeChunk.document_id == document.id,
+            )
+            .values(status=chunk_status)
+        )
         await self.session.flush()
 
     async def mark_ingestion_failed(
@@ -391,14 +460,54 @@ class KnowledgeRepository:
         job.error_message = error[:2000]
         await self.session.flush()
 
-    async def delete_document(self, document: KnowledgeDocument) -> None:
+    async def mark_document_deleted(self, document: KnowledgeDocument) -> None:
         document.status = DocumentStatus.DELETED
+        document.object_cleanup_pending = True
+        document.object_cleanup_error = None
         await self.session.execute(
-            delete(KnowledgeChunk).where(
+            update(KnowledgeChunk)
+            .where(
                 KnowledgeChunk.tenant_id == document.tenant_id,
                 KnowledgeChunk.document_id == document.id,
             )
+            .values(status=ChunkStatus.DISABLED)
         )
+        await self.session.flush()
+
+    async def list_pending_object_cleanup_ids(self, *, limit: int) -> list[UUID]:
+        statement = (
+            select(KnowledgeDocument.id)
+            .where(
+                KnowledgeDocument.status == DocumentStatus.DELETED,
+                KnowledgeDocument.object_cleanup_pending.is_(True),
+            )
+            .order_by(KnowledgeDocument.updated_at, KnowledgeDocument.id)
+            .limit(limit)
+        )
+        return list(await self.session.scalars(statement))
+
+    async def get_pending_object_cleanup_for_update(
+        self, document_id: UUID
+    ) -> KnowledgeDocument | None:
+        statement = (
+            select(KnowledgeDocument)
+            .where(
+                KnowledgeDocument.id == document_id,
+                KnowledgeDocument.status == DocumentStatus.DELETED,
+                KnowledgeDocument.object_cleanup_pending.is_(True),
+            )
+            .with_for_update()
+        )
+        return cast(KnowledgeDocument | None, await self.session.scalar(statement))
+
+    async def mark_object_cleanup_completed(self, document: KnowledgeDocument) -> None:
+        document.object_cleanup_pending = False
+        document.object_cleanup_error = None
+        await self.session.flush()
+
+    async def mark_object_cleanup_failed(self, document: KnowledgeDocument, *, error: str) -> None:
+        document.object_cleanup_attempts += 1
+        document.object_cleanup_error = error[:2000]
         await self.session.flush()
 
     async def search(
@@ -638,6 +747,7 @@ class KnowledgeRepository:
                 Citation.id == citation_id,
                 Citation.tenant_id == tenant_id,
                 KnowledgeDocument.tenant_id == tenant_id,
+                KnowledgeDocument.status != DocumentStatus.DELETED,
                 Message.tenant_id == tenant_id,
                 Message.application_id == application_id,
                 Message.conversation_id == conversation_id,

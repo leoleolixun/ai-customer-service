@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, Request, Response, status
 
-from app.api.dependencies import SessionDependency, TenantAdminDependency
+from app.api.dependencies import AgentDependency, SessionDependency, TenantAdminDependency
 from app.domains.applications.schemas import (
     ApplicationCreate,
     ApplicationResponse,
@@ -47,7 +47,7 @@ async def create_application(
     operation_id="listApplications",
 )
 async def list_applications(
-    actor: TenantAdminDependency,
+    actor: AgentDependency,
     session: SessionDependency,
 ) -> list[ApplicationResponse]:
     assert actor.tenant_id is not None

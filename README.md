@@ -44,6 +44,7 @@ V1.0 使用两个中立演示租户验证隔离、知识问答、拒答和人工
 - [单机部署与回滚](docs/deployment.md)
 - [备份与恢复](docs/backup-restore.md)
 - [TypeScript SDK 接入指南](packages/sdk/README.md)
+- [Widget 30 分钟接入与验收](docs/widget-onboarding-acceptance.md)
 
 ## 本地启动
 
@@ -67,9 +68,13 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 uv run celery -A app.workers.celery_app worker --loglevel=INFO
 
 # 终端 3
-npm run dev:admin
+uv run celery -A app.workers.celery_app beat \
+  --schedule=/tmp/celerybeat-schedule --loglevel=INFO
 
 # 终端 4
+npm run dev:admin
+
+# 终端 5
 npm run dev:demo
 ```
 
@@ -112,7 +117,7 @@ uv run python scripts/check_secrets.py
 
 ## 当前状态
 
-V1.0 候选已冻结到 `a61f69b`。后端和前端自动化、150 条 RAG 固定集、真实 GLM Provider、中文 Widget、
-多租户隔离、1 万分块性能、Worker 中断恢复、最终镜像 Secret 扫描、备份恢复和应用回滚均已通过；详细证据见
-[`docs/acceptance/v1.0.md`](docs/acceptance/v1.0.md)。当前只剩 30 条独立人工复核，完成前发布门禁仍为失败，
-不能发布 `v1.0.0` Tag 或启动下一版本。
+V1.0 开发范围已经收口，当前发布结论和仍需独立人工完成的门禁以
+[`docs/acceptance/v1.0.md`](docs/acceptance/v1.0.md) 为准。`a61f69b` 是上一轮技术验收候选，不代表当前
+工作树；只有当前候选的自动化、真实组件、独立 30 分钟接入和 30 条人工复核全部完成后，才允许发布
+`v1.0.0` Tag 或启动下一版本。

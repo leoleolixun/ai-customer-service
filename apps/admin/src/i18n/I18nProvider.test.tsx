@@ -1,8 +1,8 @@
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   formatMessage,
@@ -21,6 +21,16 @@ const LanguageProbe: React.FC = () => {
   );
 };
 
+const LanguageSetterProbe: React.FC = () => {
+  const { language, setLanguage } = useI18n();
+  return (
+    <div>
+      <span>{language}</span>
+      <button type="button" onClick={() => setLanguage('zh-CN')}>switch</button>
+    </div>
+  );
+};
+
 describe('I18nProvider', () => {
   const originalLanguage = navigator.language;
 
@@ -31,6 +41,7 @@ describe('I18nProvider', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     localStorage.clear();
     Object.defineProperty(navigator, 'language', { configurable: true, value: originalLanguage });
   });
@@ -55,5 +66,28 @@ describe('I18nProvider', () => {
   it('formats named message values', () => {
     expect(formatMessage('Hello, {name}. You have {count} items.', { name: 'Leo', count: 2 }))
       .toBe('Hello, Leo. You have 2 items.');
+  });
+
+  it('falls back to the browser language when storage reads fail', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Storage is disabled');
+    });
+    Object.defineProperty(navigator, 'language', { configurable: true, value: 'zh-CN' });
+
+    render(<I18nProvider><LanguageProbe /></I18nProvider>);
+
+    expect(screen.getByText('zh-CN · 客服管理后台 · 启用 · 客户申请人工客服')).toBeVisible();
+  });
+
+  it('switches the active page when storage writes fail', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage is disabled');
+    });
+    render(<I18nProvider><LanguageSetterProbe /></I18nProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'switch' }));
+
+    expect(screen.getByText('zh-CN')).toBeVisible();
+    expect(document.documentElement.lang).toBe('zh-CN');
   });
 });

@@ -8,6 +8,7 @@ import {
   Library,
   LogOut,
   Menu,
+  MessagesSquare,
   Users,
 } from 'lucide-react';
 import {
@@ -106,11 +107,18 @@ const AppShell: React.FC = () => {
     { label: messages.shell.navigation.applications, path: '/applications', icon: AppWindow },
     { label: messages.shell.navigation.aiModels, path: '/ai', icon: Bot },
     { label: messages.shell.navigation.knowledge, path: '/knowledge', icon: Library },
+    { label: messages.shell.navigation.conversations, path: '/conversations', icon: MessagesSquare },
     { label: messages.shell.navigation.team, path: '/team', icon: Users },
     { label: messages.shell.navigation.operations, path: '/operations', icon: Activity },
   ];
+  const agentWorkspaceItem = {
+    label: messages.shell.navigation.agentWorkspace,
+    path: '/handoffs',
+    icon: Headphones,
+  };
   const agentItems = [
-    { label: messages.shell.navigation.agentWorkspace, path: '/handoffs', icon: Headphones },
+    { label: messages.shell.navigation.conversations, path: '/conversations', icon: MessagesSquare },
+    agentWorkspaceItem,
   ];
   const platformItems = [
     { label: messages.shell.navigation.platformOverview, path: '/', icon: LayoutDashboard },
@@ -120,7 +128,7 @@ const AppShell: React.FC = () => {
     ? platformItems
     : user.role === 'agent'
       ? agentItems
-      : [...adminItems, ...agentItems];
+      : [...adminItems, agentWorkspaceItem];
 
   const drawer = (
     <Box sx={{ bgcolor: '#17211d', color: '#fff', display: 'flex', flexDirection: 'column', height: '100%' }}>

@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,6 +52,33 @@ class MessageResponse(BaseModel):
     citations: list[CitationResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class AdminConversationResponse(BaseModel):
+    id: UUID
+    application_id: UUID
+    end_user_id: UUID
+    external_user_id: str
+    mode: ConversationMode
+    status: ConversationStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminConversationPage(BaseModel):
+    items: list[AdminConversationResponse]
+    next_cursor: UUID | None = None
+    has_more: bool
+
+
+class AdminMessageResponse(MessageResponse):
+    model_info: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminMessagePage(BaseModel):
+    items: list[AdminMessageResponse]
+    next_cursor: UUID | None = None
+    has_more: bool
 
 
 class FeedbackCreate(BaseModel):

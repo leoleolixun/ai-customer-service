@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlsplit
@@ -19,6 +20,7 @@ from app.domains.audit.repository import AuditRepository
 from app.domains.knowledge.models import (
     DocumentStatus,
     IngestionJob,
+    IngestionStatus,
     KnowledgeBase,
     KnowledgeBaseStatus,
     KnowledgeDocument,
@@ -434,6 +436,30 @@ class DocumentService:
         await self._require_base(tenant_id, base_id)
         return await self.knowledge.list_documents(tenant_id=tenant_id, base_id=base_id)
 
+    async def restore_metadata(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        documents: Sequence[KnowledgeDocument],
+    ) -> dict[UUID, tuple[bool, str | None]]:
+        knowledge_base = await self._require_base(tenant_id, base_id)
+        version_documents = await self.knowledge.list_version_documents(
+            tenant_id=tenant_id,
+            base_id=base_id,
+        )
+        metadata: dict[UUID, tuple[bool, str | None]] = {}
+        for document in documents:
+            if document.status != DocumentStatus.DISABLED:
+                metadata[document.id] = (False, None)
+            elif knowledge_base.status != KnowledgeBaseStatus.ACTIVE:
+                metadata[document.id] = (False, "document_restore_base_disabled")
+            elif self._has_ready_version_conflict(document, version_documents):
+                metadata[document.id] = (False, "document_restore_version_conflict")
+            else:
+                metadata[document.id] = (True, None)
+        return metadata
+
     async def get(
         self, *, tenant_id: UUID, base_id: UUID, document_id: UUID
     ) -> tuple[KnowledgeDocument, IngestionJob]:
@@ -452,6 +478,74 @@ class DocumentService:
             )
         return document, job
 
+    async def update_lifecycle_status(
+        self,
+        *,
+        tenant_id: UUID,
+        base_id: UUID,
+        document_id: UUID,
+        target_status: DocumentStatus,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> KnowledgeDocument:
+        knowledge_base = await self.knowledge.get_base_for_update(
+            tenant_id=tenant_id,
+            base_id=base_id,
+        )
+        if knowledge_base is None:
+            KnowledgeBaseService._raise_base_not_found()
+        document = await self.knowledge.get_document_for_update(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            document_id=document_id,
+        )
+        if document is None or document.status == DocumentStatus.DELETED:
+            self._raise_document_not_found()
+
+        previous_status = document.status
+        if target_status == DocumentStatus.DISABLED:
+            if previous_status != DocumentStatus.READY:
+                self._raise_invalid_transition(previous_status, target_status)
+        elif target_status == DocumentStatus.READY:
+            if previous_status != DocumentStatus.DISABLED:
+                self._raise_invalid_transition(previous_status, target_status)
+            await self._validate_restore(
+                knowledge_base=knowledge_base,
+                document=document,
+            )
+        else:
+            self._raise_invalid_transition(previous_status, target_status)
+
+        try:
+            await self.knowledge.set_document_retrieval_status(
+                document,
+                status=target_status,
+            )
+            action = (
+                "knowledge_document.disable"
+                if target_status == DocumentStatus.DISABLED
+                else "knowledge_document.restore"
+            )
+            await self.audit.add(
+                tenant_id=tenant_id,
+                actor_type="staff",
+                actor_id=str(actor.user_id),
+                action=action,
+                resource_type="knowledge_document",
+                resource_id=str(document.id),
+                request_id=request_id,
+                details={
+                    "from_status": previous_status.value,
+                    "to_status": target_status.value,
+                },
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
+        await self.session.refresh(document)
+        return document
+
     async def delete(
         self,
         *,
@@ -461,13 +555,25 @@ class DocumentService:
         actor: StaffPrincipal,
         request_id: str | None,
     ) -> None:
+        knowledge_base = await self.knowledge.get_base_for_update(
+            tenant_id=tenant_id,
+            base_id=base_id,
+        )
+        if knowledge_base is None:
+            KnowledgeBaseService._raise_base_not_found()
         document = await self.knowledge.get_document_for_update(
             tenant_id=tenant_id,
             base_id=base_id,
             document_id=document_id,
         )
-        if document is None or document.status == DocumentStatus.DELETED:
+        if document is None:
             self._raise_document_not_found()
+        if document.status == DocumentStatus.DELETED:
+            cleanup_pending = document.object_cleanup_pending
+            await self.session.rollback()
+            if cleanup_pending:
+                await self._cleanup_stored_object(document.id, raise_on_failure=True)
+            return
         if document.status in {DocumentStatus.UPLOADED, DocumentStatus.PROCESSING}:
             raise AppError(
                 status_code=409,
@@ -475,24 +581,38 @@ class DocumentService:
                 title="Document ingestion in progress",
                 detail="Wait for ingestion to finish before deleting this document.",
             )
-        await self.knowledge.delete_document(document)
-        await self.audit.add(
-            tenant_id=tenant_id,
-            actor_type="staff",
-            actor_id=str(actor.user_id),
-            action="knowledge_document.delete",
-            resource_type="knowledge_document",
-            resource_id=str(document.id),
-            request_id=request_id,
-        )
         try:
-            # Delete the object before committing the tombstone. Object deletion is idempotent,
-            # so a later database failure can be retried without leaving an unreachable object.
-            await self.storage.delete(document.object_key)
+            await self.knowledge.mark_document_deleted(document)
+            await self.audit.add(
+                tenant_id=tenant_id,
+                actor_type="staff",
+                actor_id=str(actor.user_id),
+                action="knowledge_document.delete",
+                resource_type="knowledge_document",
+                resource_id=str(document.id),
+                request_id=request_id,
+            )
             await self.session.commit()
         except Exception:
             await self.session.rollback()
             raise
+        await self._cleanup_stored_object(document.id, raise_on_failure=True)
+
+    async def cleanup_pending_objects(self, *, limit: int = 100) -> dict[str, int]:
+        document_ids = await self.knowledge.list_pending_object_cleanup_ids(limit=limit)
+        await self.session.rollback()
+        completed = 0
+        failed = 0
+        for document_id in document_ids:
+            if await self._cleanup_stored_object(document_id, raise_on_failure=False):
+                completed += 1
+            else:
+                failed += 1
+        return {
+            "selected": len(document_ids),
+            "completed": completed,
+            "failed": failed,
+        }
 
     async def retry(
         self,
@@ -545,6 +665,158 @@ class DocumentService:
         if knowledge_base is None:
             KnowledgeBaseService._raise_base_not_found()
         return knowledge_base
+
+    async def _validate_restore(
+        self,
+        *,
+        knowledge_base: KnowledgeBase,
+        document: KnowledgeDocument,
+    ) -> None:
+        if knowledge_base.status != KnowledgeBaseStatus.ACTIVE:
+            raise AppError(
+                status_code=409,
+                code="document_restore_base_disabled",
+                title="Document cannot be restored",
+                detail="Enable the knowledge base before restoring this document.",
+            )
+
+        job = await self.knowledge.get_job(
+            tenant_id=document.tenant_id,
+            document_id=document.id,
+        )
+        if job is None or job.status != IngestionStatus.COMPLETED or job.stage != "published":
+            self._raise_restore_index_invalid()
+
+        try:
+            content = await self.storage.get(document.object_key)
+        except AppError as exc:
+            raise AppError(
+                status_code=409,
+                code="document_restore_source_invalid",
+                title="Document source is unavailable",
+                detail="The original object is unavailable; upload a replacement document.",
+            ) from exc
+        if len(content) != document.byte_size or hashlib.sha256(content).hexdigest() != (
+            document.content_hash
+        ):
+            raise AppError(
+                status_code=409,
+                code="document_restore_source_invalid",
+                title="Document source is invalid",
+                detail="The original object no longer matches this document version.",
+            )
+
+        chunks = await self.knowledge.list_document_chunks(
+            tenant_id=document.tenant_id,
+            base_id=document.knowledge_base_id,
+            document_id=document.id,
+        )
+        expected_indexes = list(range(len(chunks)))
+        if not chunks or [chunk.chunk_index for chunk in chunks] != expected_indexes:
+            self._raise_restore_index_invalid()
+        if any(
+            chunk.document_version != document.version
+            or chunk.embedding_model != knowledge_base.embedding_model_name
+            or chunk.embedding_version != knowledge_base.embedding_version
+            or chunk.embedding_dimension != knowledge_base.embedding_dimension
+            or len(chunk.embedding) != knowledge_base.embedding_dimension
+            or chunk.chunking_version != knowledge_base.chunking_version
+            for chunk in chunks
+        ):
+            self._raise_restore_index_invalid()
+
+        version_documents = await self.knowledge.list_version_documents(
+            tenant_id=document.tenant_id,
+            base_id=document.knowledge_base_id,
+        )
+        if self._has_ready_version_conflict(document, version_documents):
+            raise AppError(
+                status_code=409,
+                code="document_restore_version_conflict",
+                title="Document version cannot be restored",
+                detail="Another published version in this document chain is currently active.",
+            )
+
+    async def _cleanup_stored_object(self, document_id: UUID, *, raise_on_failure: bool) -> bool:
+        document = await self.knowledge.get_pending_object_cleanup_for_update(document_id)
+        if document is None:
+            await self.session.rollback()
+            return True
+        try:
+            await self.storage.delete(document.object_key)
+        except Exception as exc:
+            await self.knowledge.mark_object_cleanup_failed(document, error=str(exc))
+            await self.session.commit()
+            if raise_on_failure:
+                raise AppError(
+                    status_code=503,
+                    code="object_storage_delete_failed",
+                    title="Object storage unavailable",
+                    detail=(
+                        "The document is deleted and hidden. Stored file cleanup will retry "
+                        "automatically."
+                    ),
+                ) from exc
+            return False
+        await self.knowledge.mark_object_cleanup_completed(document)
+        await self.session.commit()
+        return True
+
+    @staticmethod
+    def _has_ready_version_conflict(
+        document: KnowledgeDocument,
+        candidates: Sequence[KnowledgeDocument],
+    ) -> bool:
+        by_id = {candidate.id: candidate for candidate in candidates}
+        connected: dict[UUID, set[UUID]] = {candidate.id: set() for candidate in candidates}
+        for candidate in candidates:
+            parent_id = candidate.supersedes_document_id
+            if parent_id is not None and parent_id in connected:
+                connected[candidate.id].add(parent_id)
+                connected[parent_id].add(candidate.id)
+
+        pending = [document.id]
+        visited: set[UUID] = set()
+        while pending:
+            candidate_id = pending.pop()
+            if candidate_id in visited:
+                continue
+            visited.add(candidate_id)
+            current = by_id.get(candidate_id)
+            if (
+                current is not None
+                and current.id != document.id
+                and current.status == DocumentStatus.READY
+            ):
+                return True
+            pending.extend(connected.get(candidate_id, ()))
+        return False
+
+    @staticmethod
+    def _raise_invalid_transition(
+        current_status: DocumentStatus,
+        target_status: DocumentStatus,
+    ) -> NoReturn:
+        raise AppError(
+            status_code=409,
+            code="document_status_transition_invalid",
+            title="Document status transition is invalid",
+            detail=(
+                f"A document cannot transition from {current_status.value} "
+                f"to {target_status.value}."
+            ),
+        )
+
+    @staticmethod
+    def _raise_restore_index_invalid() -> NoReturn:
+        raise AppError(
+            status_code=409,
+            code="document_restore_index_invalid",
+            title="Document index is unavailable",
+            detail=(
+                "The published index is incomplete or incompatible; upload a replacement document."
+            ),
+        )
 
     @staticmethod
     def _resolve_mime(filename: str, provided: str | None) -> str:

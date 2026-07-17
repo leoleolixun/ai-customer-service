@@ -54,6 +54,51 @@ test('staff can sign in and reach the tenant overview', async ({ page }) => {
       });
       return;
     }
+    if (path === '/v1/admin/conversations') {
+      await route.fulfill({
+        json: {
+          items: [{
+            id: '4aa7d74f-253f-4f42-8f40-c53c118dd24a',
+            application_id: 'application-e2e',
+            end_user_id: 'end-user-e2e',
+            external_user_id: 'customer-e2e',
+            mode: 'ai',
+            status: 'open',
+            created_at: '2026-07-17T08:00:00Z',
+            updated_at: '2026-07-17T08:05:00Z',
+          }],
+          next_cursor: null,
+          has_more: false,
+        },
+      });
+      return;
+    }
+    if (path === '/v1/admin/conversations/4aa7d74f-253f-4f42-8f40-c53c118dd24a/messages') {
+      await route.fulfill({
+        json: {
+          items: [{
+            id: 'message-e2e',
+            conversation_id: '4aa7d74f-253f-4f42-8f40-c53c118dd24a',
+            sender: 'ai',
+            content: '这是依据知识库生成的客服回复。',
+            status: 'completed',
+            error_code: null,
+            citations: [{
+              id: 'citation-e2e',
+              source_title: '测试知识文档',
+              source_url: 'https://docs.example.test/source',
+              quote: '这是可以核对的来源片段。',
+            }],
+            model_info: { model: 'glm-4-flash', grounding: 'evidence', evidence_count: 1 },
+            created_at: '2026-07-17T08:05:00Z',
+            updated_at: '2026-07-17T08:05:00Z',
+          }],
+          next_cursor: null,
+          has_more: false,
+        },
+      });
+      return;
+    }
     await route.fulfill({ json: [] });
   });
 
@@ -68,6 +113,17 @@ test('staff can sign in and reach the tenant overview', async ({ page }) => {
   await expect(page.getByRole('main').getByText('Applications')).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem('support-admin-token')))
     .toBe('e2e-admin-token');
+
+  await page.getByRole('button', { name: 'Change language' }).click();
+  await page.getByRole('menuitem', { name: '简体中文' }).click();
+  await page.getByRole('button', { name: '会话记录' }).click();
+
+  await expect(page).toHaveURL('http://127.0.0.1:5173/conversations');
+  await expect(page.getByRole('heading', { name: '会话记录' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /customer-e2e/ })).toBeVisible();
+  await expect(page.getByText('这是依据知识库生成的客服回复。')).toBeVisible();
+  await expect(page.getByText('引用来源')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 });
 
 test('staff login surfaces Problem Details without storing a token', async ({ page }) => {
@@ -83,7 +139,7 @@ test('staff login surfaces Problem Details without storing a token', async ({ pa
   await page.getByLabel('Password').fill('wrong-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+  await expect(page.getByRole('alert')).toContainText('The email or password is incorrect.');
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeEnabled();
   await expect.poll(() => page.evaluate(() => localStorage.getItem('support-admin-token')))
     .toBeNull();

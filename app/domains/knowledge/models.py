@@ -4,6 +4,7 @@ from uuid import UUID
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     Enum,
     Float,
     ForeignKey,
@@ -102,6 +103,11 @@ class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_knowledge_documents_tenant_base", "tenant_id", "knowledge_base_id"),
         Index("ix_knowledge_documents_tenant_status", "tenant_id", "status"),
+        Index(
+            "ix_knowledge_documents_object_cleanup",
+            "object_cleanup_pending",
+            "updated_at",
+        ),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -133,6 +139,13 @@ class KnowledgeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    object_cleanup_pending: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    object_cleanup_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    object_cleanup_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):

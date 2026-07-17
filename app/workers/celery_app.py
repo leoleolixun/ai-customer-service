@@ -18,4 +18,10 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    beat_schedule={
+        "cleanup-deleted-knowledge-objects": {
+            "task": "knowledge.cleanup_deleted_objects",
+            "schedule": 60.0,
+        }
+    },
 )

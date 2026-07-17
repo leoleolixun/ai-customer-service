@@ -1,3 +1,5 @@
+import { en, zhCN } from '@/i18n/messages';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 export class ApiError extends Error {
@@ -45,6 +47,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function errorMessage(error: unknown, fallback = 'The request could not be completed.'): string {
-  return error instanceof Error ? error.message : fallback;
+export function errorMessage(
+  error: unknown,
+  fallback = 'The request could not be completed.',
+  localizedMessages: Readonly<Record<string, string>> = {},
+): string {
+  if (error instanceof ApiError) {
+    const pageMessages = document.documentElement.lang === 'zh-CN' ? zhCN.errors : en.errors;
+    return localizedMessages[error.code]
+      ?? (pageMessages as Readonly<Record<string, string>>)[error.code]
+      ?? fallback;
+  }
+  return fallback;
 }

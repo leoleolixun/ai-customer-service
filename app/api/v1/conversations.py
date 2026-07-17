@@ -5,16 +5,85 @@ from uuid import UUID
 from fastapi import APIRouter, Header, Query, status
 from fastapi.responses import Response, StreamingResponse
 
-from app.api.dependencies import CurrentCustomerDependency, SessionDependency, StorageDependency
+from app.api.dependencies import (
+    AgentDependency,
+    CurrentCustomerDependency,
+    SessionDependency,
+    StorageDependency,
+)
+from app.domains.conversations.models import ConversationMode, ConversationStatus
 from app.domains.conversations.schemas import (
+    AdminConversationPage,
+    AdminConversationResponse,
+    AdminMessagePage,
     ConversationCreate,
     ConversationResponse,
     MessageCreate,
     MessageResponse,
 )
-from app.domains.conversations.service import ConversationService
+from app.domains.conversations.service import AdminConversationService, ConversationService
 
 router = APIRouter(prefix="/chat/sessions", tags=["customer-chat"])
+admin_router = APIRouter(prefix="/admin/conversations", tags=["admin-conversations"])
+
+
+@admin_router.get("", response_model=AdminConversationPage, operation_id="listAdminConversations")
+async def list_admin_conversations(
+    actor: AgentDependency,
+    session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    before: Annotated[
+        UUID | None,
+        Query(description="Return conversations older than this ID"),
+    ] = None,
+    application_id: UUID | None = None,
+    conversation_status: Annotated[ConversationStatus | None, Query(alias="status")] = None,
+    mode: ConversationMode | None = None,
+) -> AdminConversationPage:
+    return await AdminConversationService(session).list_conversations(
+        actor=actor,
+        limit=limit,
+        before_id=before,
+        application_id=application_id,
+        status=conversation_status,
+        mode=mode,
+    )
+
+
+@admin_router.get(
+    "/{conversation_id}",
+    response_model=AdminConversationResponse,
+    operation_id="getAdminConversation",
+)
+async def get_admin_conversation(
+    conversation_id: UUID,
+    actor: AgentDependency,
+    session: SessionDependency,
+) -> AdminConversationResponse:
+    return await AdminConversationService(session).get(
+        actor=actor,
+        conversation_id=conversation_id,
+    )
+
+
+@admin_router.get(
+    "/{conversation_id}/messages",
+    response_model=AdminMessagePage,
+    operation_id="listAdminConversationMessages",
+)
+async def list_admin_conversation_messages(
+    conversation_id: UUID,
+    actor: AgentDependency,
+    session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    before: Annotated[UUID | None, Query(description="Return messages older than this ID")] = None,
+) -> AdminMessagePage:
+    return await AdminConversationService(session).list_messages(
+        actor=actor,
+        conversation_id=conversation_id,
+        limit=limit,
+        before_id=before,
+    )
 
 
 @router.post(

@@ -67,6 +67,82 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  component-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV_FILE: .env.example
+      COMPOSE_PROJECT_NAME: ai-cs-component-ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare report directory and one-time demo password
+        run: |
+          mkdir -p reports
+          echo "DEMO_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+      - name: Build and migrate the real component stack
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env.example build api worker beat
+          docker compose --env-file .env.example up -d postgres redis minio minio-init
+          docker compose --env-file .env.example run --rm -T api alembic upgrade head
+      - name: Seed two isolated tenants and start API and Worker
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DEMO_PASSWORD" \
+            | docker compose --env-file .env.example run --rm -T api \
+                python scripts/seed_demo.py --password-stdin >/dev/null
+          docker compose --env-file .env.example up -d api worker beat
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose --env-file .env.example logs --no-color api
+          exit 1
+      - name: Run two-tenant HTTP and real component isolation probes
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DEMO_PASSWORD" \
+            | docker compose --env-file .env.example exec -T api \
+                python scripts/smoke_v1.py \
+                  --base-url http://127.0.0.1:8000 \
+                  --password-stdin \
+            | tee reports/two-tenant-smoke.json
+          docker compose --env-file .env.example exec -T api \
+            python scripts/component_isolation_probe.py \
+            | tee reports/component-isolation.json
+      - name: Verify queued Worker recovery and idempotent replay
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env.example stop worker
+          docker compose --env-file .env.example exec -T api \
+            python scripts/worker_recovery_probe.py enqueue \
+              --state /tmp/ci-worker-recovery.json \
+            | tee reports/worker-enqueue.json
+          docker compose --env-file .env.example up -d worker
+          docker compose --env-file .env.example exec -T api \
+            python scripts/worker_recovery_probe.py verify \
+              --state /tmp/ci-worker-recovery.json \
+              --timeout 120 \
+              --replay \
+            | tee reports/worker-recovery.json
+      - name: Capture component logs after failure
+        if: ${{ failure() }}
+        run: >-
+          docker compose --env-file .env.example logs --no-color
+          postgres redis minio api worker beat > reports/component-services.log 2>&1
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: component-integration-report
+          path: reports/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove component stack
+        if: ${{ always() }}
+        run: docker compose --env-file .env.example down --volumes --remove-orphans
+
   frontend-quality:
     runs-on: ubuntu-latest
     steps:

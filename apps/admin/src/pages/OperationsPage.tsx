@@ -20,6 +20,9 @@ import { useI18n } from '@/i18n/I18nProvider';
 
 const OperationsPage: React.FC = () => {
   const { format, labelValue, language, messages } = useI18n();
+  const errorLabel = (code: string): string => (
+    (messages.errors as Readonly<Record<string, string>>)[code] ?? messages.operations.unknownError
+  );
   const { data: usage } = useSuspenseQuery({
     queryKey: ['usage-summary'],
     queryFn: () => api<UsageSummary>('/v1/admin/usage/summary'),
@@ -70,14 +73,14 @@ const OperationsPage: React.FC = () => {
         <Table size="small">
           <TableHead><TableRow><TableCell>{messages.operations.time}</TableCell><TableCell>{messages.operations.model}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell>{messages.operations.tokens}</TableCell><TableCell>{messages.operations.latency}</TableCell><TableCell>{messages.operations.cost}</TableCell></TableRow></TableHead>
           <TableBody>
-            {modelCalls.map((call) => <TableRow key={call.id} hover><TableCell>{new Date(call.created_at).toLocaleString(language)}</TableCell><TableCell>{call.model_name}</TableCell><TableCell><Typography color={call.status === 'failed' ? 'error.main' : 'success.main'} fontWeight={700}>{labelValue(call.status)}</Typography>{call.error_code && <Typography color="text.secondary" fontSize={11}>{call.error_code}</Typography>}</TableCell><TableCell>{(call.prompt_tokens + call.completion_tokens).toLocaleString(language)}</TableCell><TableCell>{format(messages.operations.milliseconds, { value: call.duration_ms.toLocaleString(language) })}</TableCell><TableCell>${(call.estimated_cost_micros / 1_000_000).toFixed(6)}</TableCell></TableRow>)}
+            {modelCalls.map((call) => <TableRow key={call.id} hover><TableCell>{new Date(call.created_at).toLocaleString(language)}</TableCell><TableCell>{call.model_name}</TableCell><TableCell><Typography color={call.status === 'failed' ? 'error.main' : 'success.main'} fontWeight={700}>{labelValue(call.status)}</Typography>{call.error_code && <Typography color="text.secondary" fontSize={11} title={call.error_code}>{errorLabel(call.error_code)}</Typography>}</TableCell><TableCell>{(call.prompt_tokens + call.completion_tokens).toLocaleString(language)}</TableCell><TableCell>{format(messages.operations.milliseconds, { value: call.duration_ms.toLocaleString(language) })}</TableCell><TableCell>${(call.estimated_cost_micros / 1_000_000).toFixed(6)}</TableCell></TableRow>)}
             {modelCalls.length === 0 && <TableRow><TableCell colSpan={6}>{messages.operations.noModelCalls}</TableCell></TableRow>}
           </TableBody>
         </Table>
       </TableContainer>
       <Typography component="h2" variant="h2" sx={{ mb: 1.5 }}>{messages.operations.auditLog}</Typography>
       <TableContainer component={Paper} variant="outlined">
-        <Table size="small"><TableHead><TableRow><TableCell>{messages.operations.time}</TableCell><TableCell>{messages.common.action}</TableCell><TableCell>{messages.operations.actor}</TableCell><TableCell>{messages.operations.resource}</TableCell><TableCell>{messages.operations.requestId}</TableCell></TableRow></TableHead><TableBody>{logs.map((log) => <TableRow key={log.id} hover><TableCell>{new Date(log.created_at).toLocaleString(language)}</TableCell><TableCell><Typography fontWeight={650} fontSize={12}>{log.action}</Typography></TableCell><TableCell>{log.actor_type} · {log.actor_id.slice(0, 12)}</TableCell><TableCell>{log.resource_type}{log.resource_id ? ` · ${log.resource_id.slice(0, 12)}` : ''}</TableCell><TableCell><Typography component="code" fontSize={11}>{log.request_id?.slice(0, 12) ?? '—'}</Typography></TableCell></TableRow>)}</TableBody></Table>
+        <Table size="small"><TableHead><TableRow><TableCell>{messages.operations.time}</TableCell><TableCell>{messages.common.action}</TableCell><TableCell>{messages.operations.actor}</TableCell><TableCell>{messages.operations.resource}</TableCell><TableCell>{messages.operations.requestId}</TableCell></TableRow></TableHead><TableBody>{logs.map((log) => <TableRow key={log.id} hover><TableCell>{new Date(log.created_at).toLocaleString(language)}</TableCell><TableCell><Typography fontWeight={650} fontSize={12} title={log.action}>{labelValue(log.action)}</Typography></TableCell><TableCell><span title={log.actor_type}>{labelValue(log.actor_type)}</span> · {log.actor_id.slice(0, 12)}</TableCell><TableCell><span title={log.resource_type}>{labelValue(log.resource_type)}</span>{log.resource_id ? ` · ${log.resource_id.slice(0, 12)}` : ''}</TableCell><TableCell><Typography component="code" fontSize={11}>{log.request_id?.slice(0, 12) ?? '—'}</Typography></TableCell></TableRow>)}</TableBody></Table>
       </TableContainer>
     </>
   );

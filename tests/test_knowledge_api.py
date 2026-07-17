@@ -3,18 +3,33 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError
-from app.core.security import hash_password
+from app.core.security import StaffPrincipal, hash_password
+from app.domains.audit.models import AuditLog
+from app.domains.conversations.models import (
+    Conversation,
+    EndUser,
+    Message,
+    MessageSender,
+    MessageStatus,
+)
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
-from app.domains.knowledge.models import KnowledgeChunk, KnowledgeDocument
+from app.domains.knowledge.models import (
+    ChunkStatus,
+    Citation,
+    DocumentStatus,
+    KnowledgeChunk,
+    KnowledgeDocument,
+)
 from app.domains.knowledge.parsing import _tokens, chunk_text, lexicalize
 from app.domains.knowledge.repository import KnowledgeRepository
-from app.domains.knowledge.service import IngestionService
+from app.domains.knowledge.service import DocumentService, IngestionService
 from app.domains.tenants.models import Tenant
 from app.providers.storage.memory import MemoryObjectStorage
 
@@ -69,6 +84,25 @@ def test_rrf_score_is_the_primary_fusion_order() -> None:
     )
 
     assert results[0].chunk.id == chunks[1].id
+
+
+def test_restore_conflict_follows_deleted_intermediate_versions() -> None:
+    first = KnowledgeDocument(id=uuid4(), status=DocumentStatus.DISABLED)
+    deleted_middle = KnowledgeDocument(
+        id=uuid4(),
+        supersedes_document_id=first.id,
+        status=DocumentStatus.DELETED,
+    )
+    latest = KnowledgeDocument(
+        id=uuid4(),
+        supersedes_document_id=deleted_middle.id,
+        status=DocumentStatus.READY,
+    )
+
+    assert DocumentService._has_ready_version_conflict(
+        first,
+        [first, deleted_middle, latest],
+    )
 
 
 async def _create_tenant_admins(
@@ -195,7 +229,7 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
     )
     headers_a = {"Authorization": f"Bearer {token_a}"}
     headers_b = {"Authorization": f"Bearer {token_b}"}
-    base_id, _ = await _prepare_knowledge_base(client, headers_a)
+    base_id, application_id = await _prepare_knowledge_base(client, headers_a)
 
     calibrated = await client.patch(
         f"/v1/admin/knowledge-bases/{base_id}",
@@ -271,6 +305,133 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
     assert search.json()
     assert "30 days" in search.json()[0]["content"]
 
+    cross_tenant_disable = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_b,
+        json={"status": "disabled"},
+    )
+    assert cross_tenant_disable.status_code == 404
+
+    disabled = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "disabled"},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["status"] == "disabled"
+    assert disabled.json()["can_restore"] is True
+    assert disabled.json()["restore_block_reason"] is None
+    disabled_again = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "disabled"},
+    )
+    assert disabled_again.status_code == 409
+    assert disabled_again.json()["code"] == "document_status_transition_invalid"
+
+    disabled_search = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/search",
+        headers=headers_a,
+        json={"query": "How many days are allowed for returns?", "top_k": 5},
+    )
+    assert disabled_search.status_code == 200, disabled_search.text
+    assert disabled_search.json() == []
+    async with session_factory() as session:
+        disabled_chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(first_document_id),
+            )
+        )
+        assert disabled_chunk is not None
+        assert disabled_chunk.status == ChunkStatus.DISABLED
+
+    restored = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["status"] == "ready"
+    assert restored.json()["can_restore"] is False
+    restored_again = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert restored_again.status_code == 409
+    assert restored_again.json()["code"] == "document_status_transition_invalid"
+    restored_search = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/search",
+        headers=headers_a,
+        json={"query": "How many days are allowed for returns?", "top_k": 5},
+    )
+    assert restored_search.status_code == 200, restored_search.text
+    assert "30 days" in restored_search.json()[0]["content"]
+
+    source_check_disable = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "disabled"},
+    )
+    assert source_check_disable.status_code == 200, source_check_disable.text
+    first_object_key = next(key for key in memory_storage.objects if first_document_id in key)
+    first_object = memory_storage.objects.pop(first_object_key)
+    missing_source_restore = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert missing_source_restore.status_code == 409
+    assert missing_source_restore.json()["code"] == "document_restore_source_invalid"
+    memory_storage.objects[first_object_key] = first_object
+
+    source_restored = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert source_restored.status_code == 200, source_restored.text
+    index_check_disable = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "disabled"},
+    )
+    assert index_check_disable.status_code == 200, index_check_disable.text
+    async with session_factory() as session:
+        chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(first_document_id),
+            )
+        )
+        assert chunk is not None
+        chunk.embedding_version = "incompatible"
+        await session.commit()
+    incompatible_index_restore = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert incompatible_index_restore.status_code == 409
+    assert incompatible_index_restore.json()["code"] == "document_restore_index_invalid"
+    async with session_factory() as session:
+        chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(first_document_id),
+            )
+        )
+        assert chunk is not None
+        chunk.embedding_version = "v1"
+        await session.commit()
+    index_restored = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert index_restored.status_code == 200, index_restored.text
+
     hidden = await client.get(
         f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}",
         headers=headers_b,
@@ -307,6 +468,42 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
         headers=headers_a,
     )
     assert old_detail.json()["document"]["status"] == "disabled"
+    assert old_detail.json()["document"]["can_restore"] is False
+    assert (
+        old_detail.json()["document"]["restore_block_reason"] == "document_restore_version_conflict"
+    )
+    old_version_restore = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}/status",
+        headers=headers_a,
+        json={"status": "ready"},
+    )
+    assert old_version_restore.status_code == 409
+    assert old_version_restore.json()["code"] == "document_restore_version_conflict"
+    async with session_factory() as session:
+        old_chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(first_document_id),
+            )
+        )
+        assert old_chunk is not None
+        assert old_chunk.status == ChunkStatus.DISABLED
+        lifecycle_audits = list(
+            await session.scalars(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == tenant_a.id,
+                    AuditLog.resource_id == first_document_id,
+                    AuditLog.action.in_(
+                        ["knowledge_document.disable", "knowledge_document.restore"]
+                    ),
+                )
+            )
+        )
+        assert [audit.action for audit in lifecycle_audits].count("knowledge_document.disable") == 3
+        assert [audit.action for audit in lifecycle_audits].count("knowledge_document.restore") == 3
+        assert all(
+            audit.details["from_status"] != audit.details["to_status"] for audit in lifecycle_audits
+        )
     new_search = await client.post(
         f"/v1/admin/knowledge-bases/{base_id}/search",
         headers=headers_a,
@@ -317,6 +514,102 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
     assert "45 days" in new_search.json()[0]["content"]
 
     replacement_id = replacement.json()["document"]["id"]
+    replacement_object_key = next(key for key in memory_storage.objects if replacement_id in key)
+
+    async with session_factory() as session:
+        replacement_chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(replacement_id),
+            )
+        )
+        assert replacement_chunk is not None
+        end_user = EndUser(
+            tenant_id=tenant_a.id,
+            application_id=UUID(application_id),
+            external_user_id="historical-citation-user",
+        )
+        session.add(end_user)
+        await session.flush()
+        conversation = Conversation(
+            tenant_id=tenant_a.id,
+            application_id=UUID(application_id),
+            end_user_id=end_user.id,
+        )
+        session.add(conversation)
+        await session.flush()
+        historical_conversation_id = conversation.id
+        message = Message(
+            tenant_id=tenant_a.id,
+            application_id=UUID(application_id),
+            conversation_id=conversation.id,
+            sender=MessageSender.AI,
+            content="Products may be returned within 45 days.",
+            status=MessageStatus.COMPLETED,
+        )
+        session.add(message)
+        await session.flush()
+        citation = Citation(
+            tenant_id=tenant_a.id,
+            message_id=message.id,
+            document_id=UUID(replacement_id),
+            chunk_id=replacement_chunk.id,
+            quote=replacement_chunk.content,
+            source_title="Returns policy",
+            source_url="https://docs.example.com/returns",
+            score=0.99,
+        )
+        session.add(citation)
+        await session.commit()
+        historical_citation_id = citation.id
+
+    async with session_factory() as session:
+        admin = await session.scalar(
+            select(StaffUser).where(StaffUser.email == "knowledge-admin@example.com")
+        )
+        assert admin is not None
+        actor = StaffPrincipal(
+            user_id=admin.id,
+            email=admin.email,
+            is_platform_admin=False,
+            tenant_id=tenant_a.id,
+            role=TenantRole.TENANT_ADMIN,
+        )
+        original_commit = session.commit
+
+        async def fail_database_commit() -> None:
+            raise RuntimeError("forced database commit failure")
+
+        monkeypatch.setattr(session, "commit", fail_database_commit)
+        with pytest.raises(RuntimeError, match="forced database commit failure"):
+            await DocumentService(session, memory_storage).delete(
+                tenant_id=tenant_a.id,
+                base_id=UUID(base_id),
+                document_id=UUID(replacement_id),
+                actor=actor,
+                request_id="commit-failure-test",
+            )
+        monkeypatch.setattr(session, "commit", original_commit)
+
+    assert replacement_object_key in memory_storage.objects
+    after_commit_failure = await client.get(
+        f"/v1/admin/knowledge-bases/{base_id}/documents/{replacement_id}",
+        headers=headers_a,
+    )
+    assert after_commit_failure.status_code == 200
+    assert after_commit_failure.json()["document"]["status"] == "ready"
+    async with session_factory() as session:
+        delete_audits = list(
+            await session.scalars(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == tenant_a.id,
+                    AuditLog.resource_id == replacement_id,
+                    AuditLog.action == "knowledge_document.delete",
+                )
+            )
+        )
+        assert delete_audits == []
+
     original_delete = memory_storage.delete
 
     async def fail_object_delete(_: str) -> None:
@@ -333,21 +626,73 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
         headers=headers_a,
     )
     assert failed_delete.status_code == 503
+    assert replacement_object_key in memory_storage.objects
 
-    still_ready = await client.get(
+    deleted_detail = await client.get(
         f"/v1/admin/knowledge-bases/{base_id}/documents/{replacement_id}",
         headers=headers_a,
     )
-    assert still_ready.status_code == 200
-    assert still_ready.json()["document"]["status"] == "ready"
+    assert deleted_detail.status_code == 404
+    deleted_search = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/search",
+        headers=headers_a,
+        json={"query": "How many days are allowed for returns?", "top_k": 5},
+    )
+    assert deleted_search.status_code == 200, deleted_search.text
+    assert deleted_search.json() == []
+    async with session_factory() as session:
+        deleted_document = await session.get(KnowledgeDocument, UUID(replacement_id))
+        assert deleted_document is not None
+        assert deleted_document.status == DocumentStatus.DELETED
+        assert deleted_document.object_cleanup_pending is True
+        assert deleted_document.object_cleanup_attempts == 1
+        assert deleted_document.object_cleanup_error
+        deleted_chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(replacement_id),
+            )
+        )
+        assert deleted_chunk is not None
+        assert deleted_chunk.status == ChunkStatus.DISABLED
+        assert await session.get(Citation, historical_citation_id) is not None
+        assert (
+            await KnowledgeRepository(session).get_citation_document(
+                tenant_id=tenant_a.id,
+                application_id=UUID(application_id),
+                conversation_id=historical_conversation_id,
+                citation_id=historical_citation_id,
+            )
+            is None
+        )
+        delete_audits = list(
+            await session.scalars(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == tenant_a.id,
+                    AuditLog.resource_id == replacement_id,
+                    AuditLog.action == "knowledge_document.delete",
+                )
+            )
+        )
+        assert len(delete_audits) == 1
 
     monkeypatch.setattr(memory_storage, "delete", original_delete)
-    retried_delete = await client.delete(
+    async with session_factory() as session:
+        cleanup_result = await DocumentService(session, memory_storage).cleanup_pending_objects()
+    assert cleanup_result == {"selected": 1, "completed": 1, "failed": 0}
+    assert not any(replacement_id in key for key in memory_storage.objects)
+    async with session_factory() as session:
+        cleaned_document = await session.get(KnowledgeDocument, UUID(replacement_id))
+        assert cleaned_document is not None
+        assert cleaned_document.object_cleanup_pending is False
+        assert cleaned_document.object_cleanup_attempts == 1
+        assert cleaned_document.object_cleanup_error is None
+        assert await session.get(Citation, historical_citation_id) is not None
+    idempotent_delete = await client.delete(
         f"/v1/admin/knowledge-bases/{base_id}/documents/{replacement_id}",
         headers=headers_a,
     )
-    assert retried_delete.status_code == 204
-    assert not any(replacement_id in key for key in memory_storage.objects)
+    assert idempotent_delete.status_code == 204
 
 
 async def test_upload_rejects_unsupported_document_type(

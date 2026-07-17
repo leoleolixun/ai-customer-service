@@ -187,7 +187,7 @@ class CustomerHandoffService:
 
     @staticmethod
     def _summary(messages: list[Message]) -> str:
-        labels = {MessageSender.USER: "Customer", MessageSender.AI: "AI"}
+        labels = {MessageSender.USER: "user", MessageSender.AI: "ai"}
         lines = [
             f"{labels[message.sender]}: {message.content.strip()}"
             for message in messages

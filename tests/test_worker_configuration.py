@@ -2,7 +2,11 @@ from uuid import UUID
 
 from app.infrastructure.database.base import Base
 from app.workers.celery_app import celery_app
-from app.workers.knowledge import _document_lock_id, ingest_knowledge_document
+from app.workers.knowledge import (
+    _document_lock_id,
+    cleanup_deleted_knowledge_objects,
+    ingest_knowledge_document,
+)
 
 
 def test_ingestion_tasks_are_redelivered_and_retried_safely() -> None:
@@ -12,6 +16,9 @@ def test_ingestion_tasks_are_redelivered_and_retried_safely() -> None:
     assert celery_app.conf.task_reject_on_worker_lost is True
     assert ingest_knowledge_document.max_retries == 3
     assert ingest_knowledge_document.autoretry_for == (Exception,)
+    cleanup_schedule = celery_app.conf.beat_schedule["cleanup-deleted-knowledge-objects"]
+    assert cleanup_schedule["task"] == cleanup_deleted_knowledge_objects.name
+    assert cleanup_schedule["schedule"] == 60.0
 
 
 def test_document_lock_id_is_stable_and_tenant_scoped() -> None:

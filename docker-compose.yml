@@ -92,6 +92,25 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  beat:
+    build: .
+    env_file: ${APP_ENV_FILE:-.env}
+    environment: *runtime-environment
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app
+      - beat
+      - --schedule=/tmp/celerybeat-schedule
+      - --loglevel=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   redis_data:

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,8 +62,20 @@ class DocumentResponse(BaseModel):
     content_hash: str
     status: DocumentStatus
     error_message: str | None
+    can_restore: bool = False
+    restore_block_reason: (
+        Literal[
+            "document_restore_base_disabled",
+            "document_restore_version_conflict",
+        ]
+        | None
+    ) = None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentLifecycleUpdate(BaseModel):
+    status: Literal[DocumentStatus.READY, DocumentStatus.DISABLED]
 
 
 class IngestionJobResponse(BaseModel):

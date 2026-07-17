@@ -96,6 +96,11 @@ export interface KnowledgeDocument {
   content_hash: string;
   status: 'uploaded' | 'processing' | 'ready' | 'failed' | 'disabled' | 'deleted';
   error_message: string | null;
+  can_restore: boolean;
+  restore_block_reason:
+    | 'document_restore_base_disabled'
+    | 'document_restore_version_conflict'
+    | null;
   created_at: string;
   updated_at: string;
 }
@@ -154,6 +159,33 @@ export interface Message {
   citations: Citation[];
   created_at: string;
   updated_at: string;
+}
+
+export interface AdminConversation {
+  id: string;
+  application_id: string;
+  end_user_id: string;
+  external_user_id: string;
+  mode: 'ai' | 'human';
+  status: 'open' | 'closed';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminConversationPage {
+  items: AdminConversation[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export interface AdminMessage extends Message {
+  model_info: Record<string, unknown>;
+}
+
+export interface AdminMessagePage {
+  items: AdminMessage[];
+  next_cursor: string | null;
+  has_more: boolean;
 }
 
 export interface UsageSummary {

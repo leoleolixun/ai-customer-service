@@ -8,6 +8,7 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const ApplicationsPage = lazy(() => import('@/pages/ApplicationsPage'));
 const AIPage = lazy(() => import('@/pages/AIPage'));
 const KnowledgePage = lazy(() => import('@/pages/KnowledgePage'));
+const ConversationsPage = lazy(() => import('@/pages/ConversationsPage'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const AgentPage = lazy(() => import('@/pages/AgentPage'));
 const OperationsPage = lazy(() => import('@/pages/OperationsPage'));
@@ -44,6 +45,11 @@ const knowledgeRoute = createRoute({
   path: '/knowledge',
   component: KnowledgePage,
 });
+const conversationsRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: '/conversations',
+  component: ConversationsPage,
+});
 const teamRoute = createRoute({
   getParentRoute: () => authenticatedRoute,
   path: '/team',
@@ -72,6 +78,7 @@ const routeTree = rootRoute.addChildren([
     applicationsRoute,
     aiRoute,
     knowledgeRoute,
+    conversationsRoute,
     teamRoute,
     handoffsRoute,
     operationsRoute,

@@ -1,6 +1,8 @@
 # V1.0 单机生产部署、升级与回滚
 
-本文用于在一台 Linux 服务器上运行 AI 客服 V1.0。部署单元包括 API、Worker、PostgreSQL/pgvector、Redis 和 MinIO；主机 Nginx 提供 TLS。开发用 `docker-compose.yml` 不参与生产，生产统一使用 `deploy/compose.production.yml`。
+本文用于在一台 Linux 服务器上运行 AI 客服 V1.0。部署单元包括 API、Worker、Celery Beat、PostgreSQL/pgvector、Redis 和 MinIO；主机 Nginx 提供 TLS。开发用 `docker-compose.yml` 不参与生产，生产统一使用 `deploy/compose.production.yml`。
+
+`beat` 是周期任务调度器，单套部署只能运行一个副本；可以扩容 `worker`，不要扩容 `beat`。
 
 备份与灾备演练见 [backup-restore.md](backup-restore.md)。
 
@@ -144,7 +146,7 @@ dc() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 
 ```bash
 dc config --quiet
-dc pull postgres postgres-tools redis minio minio-init minio-client api worker migrate
+dc pull postgres postgres-tools redis minio minio-init minio-client api worker beat migrate
 ```
 
 首次部署按以下顺序执行：
@@ -153,7 +155,7 @@ dc pull postgres postgres-tools redis minio minio-init minio-client api worker m
 dc up -d postgres redis minio
 dc run --rm minio-init
 dc run --rm migrate
-dc up -d api worker
+dc up -d api worker beat
 dc ps
 ```
 
@@ -165,7 +167,7 @@ dc ps
 curl --fail --show-error http://127.0.0.1:8000/health/live
 curl --fail --show-error http://127.0.0.1:8000/health/ready
 dc run --rm --no-deps migrate alembic current
-dc logs --tail=100 api worker
+dc logs --tail=100 api worker beat
 ```
 
 首次创建平台管理员：
@@ -232,7 +234,7 @@ curl --fail --show-error "https://${DOMAIN}/demo/" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/sdk/index.js" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/widget/ai-support-widget.js" >/dev/null
 dc run --rm --no-deps migrate alembic current
-dc logs --since=10m api worker
+dc logs --since=10m api worker beat
 ```
 
 冻结候选镜像后扫描仓库、前端构建产物、验收报告和镜像内 `/app` 文件系统：
@@ -301,15 +303,15 @@ ENV_FILE=/etc/ai-customer-service/production.env
 COMPOSE_FILE=deploy/compose.production.yml
 dc() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 
-dc stop -t 60 api worker
+dc stop -t 60 api worker beat
 ENV_FILE="$ENV_FILE" BACKUP_ROOT=/var/backups/ai-customer-service \
   ./scripts/backup.sh
 
 # 更新 current 和 production.env 的 APP_IMAGE 后：
 dc config --quiet
-dc pull api worker migrate
+dc pull api worker beat migrate
 dc run --rm migrate
-dc up -d api worker
+dc up -d api worker beat
 curl --fail --show-error http://127.0.0.1:8000/health/ready
 dc run --rm --no-deps migrate alembic current
 ```
@@ -324,7 +326,7 @@ dc run --rm --no-deps migrate alembic current
 
 1. 将 `APP_IMAGE` 改回旧不可变 tag；
 2. 将 `current` 指回对应旧 release；
-3. `dc up -d api worker`；
+3. `dc up -d api worker beat`；
 4. 验证健康和业务流程。
 
 不要自动执行 `alembic downgrade`。每条 downgrade 必须在 PostgreSQL 副本上单独演练后才能用于生产。

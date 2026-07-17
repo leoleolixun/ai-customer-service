@@ -20,6 +20,7 @@ import type { Handoff, Message } from '@/api/types';
 import { useAuth } from '@/auth/AuthProvider';
 import PageHeader from '@/components/PageHeader';
 import { useI18n } from '@/i18n/I18nProvider';
+import { localizeHandoffSummary } from '@/pages/handoffSummary';
 
 const AgentPage: React.FC = () => {
   const { format, labelValue, language, messages } = useI18n();
@@ -104,7 +105,12 @@ const AgentPage: React.FC = () => {
                   <Typography color="text.secondary" fontSize={12}>{selected.reason ? labelValue(selected.reason) : messages.agent.supportRequested}</Typography>
                   {selected.summary && (
                     <Typography color="text.secondary" fontSize={12} mt={0.75} sx={{ whiteSpace: 'pre-wrap' }}>
-                      {format(messages.agent.summary, { summary: selected.summary })}
+                      {format(messages.agent.summary, {
+                        summary: localizeHandoffSummary(selected.summary, {
+                          customer: messages.agent.customer,
+                          ai: messages.agent.ai,
+                        }),
+                      })}
                     </Typography>
                   )}
                 </Box>

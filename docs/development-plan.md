@@ -114,12 +114,11 @@ V1.0 先证明平台核心；博客是 V1.1 的首个内容源接入方，`go-ma
 
 ## 6. 当前下一步
 
-1. V1.0 候选冻结到 Commit `a61f69b133e7d9880f7e8dfd0c289636bc0a8124` 和镜像摘要
-   `sha256:0cf84b4e...33ea69`，不再加入新功能。
-2. 开发范围、英文/简体中文界面、桌面与 375px E2E、自动化、迁移、隔离、性能、灾备和应用回滚已通过。
-3. 真实 `glm-4.7-flash` 使用关闭 Thinking 的模型配置完成 10 次流式测试和中文带引用 Widget 闭环，
-   首 Token P95 为 `568.841ms`。
-4. 由独立评审人完成 `eval/runs/v1.0-a61f69b/human-review.jsonl` 的 30 条人工复核，合并后使用 `--enforce-gate`
-   重新计算发布门禁；当前完成数为 `0/30`。
-5. 人工复核通过后配置 Git Remote 并让同一候选执行云端 CI，更新验收记录并发布 `v1.0.0` Tag；此前
-   不启动下一版本开发。
+1. 冻结包含普通会话审阅、知识文档生命周期、间接 Prompt Injection 防护和双语修正的新 V1.0 候选。
+2. 对同一候选重新执行自动化、OpenAPI、空库迁移、真实 PostgreSQL/Redis/MinIO/Worker 组件、RAG 固定集、
+   真实 Provider、最终镜像 Secret、性能和灾备验收，不继承旧候选结果。
+3. 由未参与平台开发的接入人依据 [`widget-onboarding-acceptance.md`](widget-onboarding-acceptance.md)
+   完成一次 30 分钟内的中立 Web 接入，并由验收负责人在管理端核对 Conversation UUID。
+4. 由独立评审人完成当前候选的 30 条人工复核，合并后使用 `--enforce-gate` 重新计算发布门禁。
+5. 配置 Git Remote 并让同一候选执行云端 CI。以上门禁全部通过后更新验收结论并发布 `v1.0.0` Tag；
+   此前不启动下一版本开发。

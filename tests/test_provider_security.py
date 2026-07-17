@@ -302,3 +302,117 @@ async def test_provider_stream_sends_configured_thinking_mode(
     assert payloads[0].get("thinking") == expected_thinking
     if expected_thinking is None:
         assert "thinking" not in payloads[0]
+
+
+@pytest.mark.asyncio
+async def test_provider_embedding_contract_sends_request_and_restores_input_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
+        accept_provider_url,
+    )
+    captured: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "data": [
+                    {"index": 1, "embedding": [0.3, 0.4]},
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ]
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handle_request),
+    )
+
+    vectors = await provider.embed(texts=["first", "second"], model="embedding-model", dimensions=2)
+
+    assert vectors == [[0.1, 0.2], [0.3, 0.4]]
+    assert captured[0].url.path == "/v1/embeddings"
+    assert captured[0].headers["authorization"] == "Bearer secret-key"
+    assert captured[0].headers["host"] == "provider.example.com"
+    assert json.loads(captured[0].content) == {
+        "model": "embedding-model",
+        "input": ["first", "second"],
+        "dimensions": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_provider_embedding_omits_unspecified_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
+        accept_provider_url,
+    )
+    payloads: list[dict[str, object]] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            request=request,
+            json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]},
+        )
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handle_request),
+    )
+
+    assert await provider.embed(texts=["first"], model="embedding-model", dimensions=0) == [
+        [0.1, 0.2]
+    ]
+    assert payloads == [{"model": "embedding-model", "input": ["first"]}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_data",
+    [
+        [{"index": 0, "embedding": [0.1, 0.2]}],
+        [
+            {"index": 0, "embedding": [0.1, 0.2]},
+            {"index": 0, "embedding": [0.3, 0.4]},
+        ],
+        [
+            {"index": 0, "embedding": [0.1]},
+            {"index": 1, "embedding": [0.3, 0.4]},
+        ],
+        [
+            {"index": 0, "embedding": [0.1, float("nan")]},
+            {"index": 1, "embedding": [0.3, 0.4]},
+        ],
+    ],
+)
+async def test_provider_embedding_rejects_invalid_response_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    response_data: list[dict[str, object]],
+) -> None:
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
+        accept_provider_url,
+    )
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, request=request, json={"data": response_data})
+        ),
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        await provider.embed(texts=["first", "second"], model="embedding-model", dimensions=2)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.code == "embedding_provider_failed"
