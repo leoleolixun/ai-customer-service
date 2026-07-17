@@ -112,11 +112,11 @@ V1.0 先证明平台核心；博客是 V1.1 的首个内容源接入方，`go-ma
 
 ## 6. 当前下一步
 
-1. V1.0 已冻结到 Commit `331cf445fed87bad0d9ee3ba4e990695ecbe1ffc` 和镜像
-   `ai-customer-service:331cf44`，当前不再加入新功能。
-2. V1.0 已执行整版正式验收，结果记录在 [`acceptance/v1.0.md`](acceptance/v1.0.md)；自动化、迁移、
-   隔离、性能和恢复项通过，版本结论因真实 Provider 和独立人工复核尚未完成而为“不通过”。
-3. 配置真实 OpenAI-compatible Provider，执行真实模型 Smoke Test、首 Token P95 和 Widget 带引用问答。
+1. V1.0 当前候选版本冻结到 Commit `80cfcfd8c41a67d0db16c52de9803cab3d1f8d51` 和镜像
+   `ai-customer-service:80cfcfd`，当前不再加入新功能。
+2. 自动化、迁移、隔离、性能、恢复和两个中立租户的 Fake Provider 全链路已经通过。
+3. 真实 GLM Provider 已完成 10 次流式 Smoke Test，并通过 `storefront-widget` 完成带引用问答；首 Token
+   P95 为 `10118.605ms`，未达到 5 秒目标，GLM-4.5-Air 默认动态思考的供应商原因已经记录。
 4. 由独立评审人完成固定抽样的 30 条人工复核，合并后使用发布门禁重新计算 RAG 指标。
-5. 只复验受影响门禁和必要回归项；全部通过后更新 V1.0 验收记录并发布 `v1.0.0` Tag。
+5. 人工复核通过后更新 V1.0 验收记录并发布 `v1.0.0` Tag。
 6. V1.0 通过后再按路线启动下一版本；访谈和需求记录可以并行维护，但不插入当前版本范围。
