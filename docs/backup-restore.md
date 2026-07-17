@@ -29,7 +29,7 @@ V1.0 单机目标：
 
 需要 6 小时 RPO 时，将 systemd timer 改为每 6 小时执行。需要分钟级 RPO 时，逻辑全量备份不够，应在 V1.1 以后增加 PostgreSQL WAL/PITR 和对象存储复制。
 
-`backup.sh` 默认 `QUIESCE_WRITES=true`：记录原先正在运行的 API/Worker，最多等待 60 秒停止，然后依次备份 PostgreSQL 和 MinIO，最后恢复原运行状态。这会产生短暂停机，但避免备份期间出现“数据库已有文档记录而对象尚未写完”的跨存储不一致。
+`backup.sh` 默认 `QUIESCE_WRITES=true`：记录原先正在运行的 API、Worker 和单实例 Beat，最多等待 60 秒停止，然后依次备份 PostgreSQL 和 MinIO，最后恢复原运行状态。这会产生短暂停机，但避免备份期间出现“数据库已有文档记录而对象尚未写完”的跨存储不一致，也避免周期清理任务在一致性窗口内继续投递。
 
 紧急情况下可设置 `QUIESCE_WRITES=false` 做在线备份，但 PostgreSQL 快照与 MinIO mirror 不是同一事务，只能作为尽力而为的副本，不计入正式 RPO。
 
@@ -145,12 +145,12 @@ sudo ENV_FILE=/etc/ai-customer-service/production.env \
 
 1. 验证全部校验和和备份结构；
 2. 比较备份与当前 `APP_IMAGE`；
-3. 停止 API/Worker；
+3. 停止 API、Worker 和 Beat；
 4. 在停止写入的状态下创建当前状态安全备份；
 5. 删除并重建应用 PostgreSQL 数据库，恢复 custom dump；
 6. 清空并恢复 MinIO 应用 bucket；
 7. 仅清空 `APP_REDIS_URL` 指定的 Redis DB；
-8. 启动 MinIO 初始化、API 和 Worker；
+8. 启动 MinIO 初始化、API、Worker 和单实例 Beat；
 9. 校验 readiness、Alembic revision 和 MinIO 对象数量。
 
 只有在全新隔离演练环境中才使用 `--skip-safety-backup`。`--allow-image-mismatch` 只允许在已证明数据库向后/向前兼容时使用，并需记录审批。

@@ -52,11 +52,13 @@ final_dir="${BACKUP_ROOT}/${backup_id}"
 tmp_dir="$(mktemp -d "${BACKUP_ROOT}/.incomplete-${backup_id}.XXXXXX")"
 api_was_running=false
 worker_was_running=false
+beat_was_running=false
 services_resumed=false
 resume_services() {
     local services=()
     [[ "${api_was_running}" == true ]] && services+=(api)
     [[ "${worker_was_running}" == true ]] && services+=(worker)
+    [[ "${beat_was_running}" == true ]] && services+=(beat)
     if [[ ${#services[@]} -gt 0 ]]; then
         "${COMPOSE[@]}" up -d "${services[@]}" >/dev/null
     fi
@@ -82,11 +84,13 @@ mkdir -p -- "${tmp_dir}/minio/bucket"
 if [[ "${QUIESCE_WRITES}" == true ]]; then
     grep -qx api <<<"${running_services}" && api_was_running=true
     grep -qx worker <<<"${running_services}" && worker_was_running=true
+    grep -qx beat <<<"${running_services}" && beat_was_running=true
     services_to_stop=()
     [[ "${api_was_running}" == true ]] && services_to_stop+=(api)
     [[ "${worker_was_running}" == true ]] && services_to_stop+=(worker)
+    [[ "${beat_was_running}" == true ]] && services_to_stop+=(beat)
     if [[ ${#services_to_stop[@]} -gt 0 ]]; then
-        printf 'Quiescing API and worker for a cross-store consistent backup...\n'
+        printf 'Quiescing API, worker, and beat for a cross-store consistent backup...\n'
         "${COMPOSE[@]}" stop -t 60 "${services_to_stop[@]}" >/dev/null
     fi
 elif [[ "${QUIESCE_WRITES}" != false ]]; then

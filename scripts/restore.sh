@@ -102,8 +102,8 @@ COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 "${COMPOSE[@]}" config --quiet
 "${COMPOSE[@]}" up -d --wait --wait-timeout 120 postgres redis minio
 
-printf 'Stopping API and worker...\n'
-"${COMPOSE[@]}" stop -t 60 api worker >/dev/null
+printf 'Stopping API, worker, and beat...\n'
+"${COMPOSE[@]}" stop -t 60 api worker beat >/dev/null
 
 restore_failed=true
 on_exit() {
@@ -161,7 +161,7 @@ printf 'Clearing non-authoritative Redis state...\n'
 
 printf 'Starting application services...\n'
 "${COMPOSE[@]}" run --rm minio-init
-"${COMPOSE[@]}" up -d --no-deps api worker
+"${COMPOSE[@]}" up -d --no-deps api worker beat
 
 ready=false
 for ((attempt = 1; attempt <= 30; attempt++)); do
