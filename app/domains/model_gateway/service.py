@@ -24,6 +24,7 @@ from app.domains.model_gateway.schemas import (
     ModelConfigCreate,
     ProviderAccountCreate,
     ProviderAccountResponse,
+    ProviderAccountUpdate,
     ProviderTestResponse,
 )
 from app.providers.llm.openai_compatible import OpenAICompatibleProvider
@@ -62,7 +63,7 @@ class ModelGatewayService:
             await self._audit(actor, "provider_account.create", account.id, request_id)
             await self.session.commit()
             await self.session.refresh(account)
-            return self._account_response(account)
+            return self._account_response(account, can_manage=True)
         except IntegrityError as exc:
             await self.session.rollback()
             raise AppError(
@@ -75,7 +76,91 @@ class ModelGatewayService:
     async def list_accounts(self, actor: StaffPrincipal) -> list[ProviderAccountResponse]:
         tenant_id, _ = self._account_owner(actor)
         accounts = await self.repository.list_accounts(tenant_id)
-        return [self._account_response(account) for account in accounts]
+        return [
+            self._account_response(account, can_manage=account.tenant_id == tenant_id)
+            for account in accounts
+        ]
+
+    async def update_account(
+        self,
+        *,
+        account_id: UUID,
+        request: ProviderAccountUpdate,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> ProviderAccountResponse:
+        account = await self._get_managed_account(account_id, actor)
+        connection_changed = False
+
+        if "name" in request.model_fields_set:
+            assert request.name is not None
+            account.name = request.name.strip()
+
+        connection_fields = request.model_fields_set & {"base_url", "api_key"}
+        if account.kind == ProviderKind.FAKE and connection_fields:
+            raise AppError(
+                status_code=400,
+                code="fake_provider_connection_immutable",
+                title="Fake provider has no external connection",
+                detail="Only the name can be changed for a fake provider account.",
+            )
+
+        if "base_url" in request.model_fields_set:
+            assert request.base_url is not None
+            normalized_url = await validate_external_http_url(request.base_url)
+            if normalized_url != account.base_url:
+                account.base_url = normalized_url
+                connection_changed = True
+
+        if "api_key" in request.model_fields_set:
+            assert request.api_key is not None
+            account.api_key_ciphertext = encrypt_secret(request.api_key.get_secret_value().strip())
+            connection_changed = True
+
+        if connection_changed:
+            account.status = ProviderStatus.DRAFT
+
+        try:
+            await self._audit(actor, "provider_account.update", account.id, request_id)
+            await self.session.commit()
+            await self.session.refresh(account)
+            return self._account_response(account, can_manage=True)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise AppError(
+                status_code=409,
+                code="provider_account_name_conflict",
+                title="Provider account already exists",
+                detail="A provider account with this name already exists in this scope.",
+            ) from exc
+
+    async def delete_account(
+        self,
+        *,
+        account_id: UUID,
+        actor: StaffPrincipal,
+        request_id: str | None,
+    ) -> None:
+        account = await self._get_managed_account(account_id, actor)
+        if await self.repository.count_model_configs_for_account(account.id):
+            raise AppError(
+                status_code=409,
+                code="provider_account_in_use",
+                title="Provider account is in use",
+                detail="Delete or replace its model configurations before deleting this provider.",
+            )
+        try:
+            await self._audit(actor, "provider_account.delete", account.id, request_id)
+            await self.repository.delete_account(account)
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise AppError(
+                status_code=409,
+                code="provider_account_in_use",
+                title="Provider account is in use",
+                detail="Delete or replace its model configurations before deleting this provider.",
+            ) from exc
 
     async def test_account(
         self,
@@ -84,12 +169,7 @@ class ModelGatewayService:
         actor: StaffPrincipal,
         request_id: str | None,
     ) -> ProviderTestResponse:
-        tenant_id, _ = self._account_owner(actor)
-        account = await self.repository.get_managed_account(
-            account_id=account_id, tenant_id=tenant_id
-        )
-        if account is None:
-            self._raise_account_not_found()
+        account = await self._get_managed_account(account_id, actor)
         if account.kind == ProviderKind.OPENAI_COMPATIBLE:
             assert account.base_url is not None and account.api_key_ciphertext is not None
             await validate_external_http_url(account.base_url)
@@ -102,6 +182,17 @@ class ModelGatewayService:
         await self._audit(actor, "provider_account.test", account.id, request_id)
         await self.session.commit()
         return ProviderTestResponse(status=account.status, message="connection verified")
+
+    async def _get_managed_account(
+        self, account_id: UUID, actor: StaffPrincipal
+    ) -> AIProviderAccount:
+        tenant_id, _ = self._account_owner(actor)
+        account = await self.repository.get_managed_account(
+            account_id=account_id, tenant_id=tenant_id
+        )
+        if account is None:
+            self._raise_account_not_found()
+        return account
 
     async def create_model_config(
         self,
@@ -263,7 +354,9 @@ class ModelGatewayService:
         return actor.tenant_id
 
     @staticmethod
-    def _account_response(account: AIProviderAccount) -> ProviderAccountResponse:
+    def _account_response(
+        account: AIProviderAccount, *, can_manage: bool
+    ) -> ProviderAccountResponse:
         return ProviderAccountResponse(
             id=account.id,
             tenant_id=account.tenant_id,
@@ -272,6 +365,7 @@ class ModelGatewayService:
             kind=account.kind,
             base_url=account.base_url,
             has_api_key=account.api_key_ciphertext is not None,
+            can_manage=can_manage,
             status=account.status,
             created_at=account.created_at,
             updated_at=account.updated_at,

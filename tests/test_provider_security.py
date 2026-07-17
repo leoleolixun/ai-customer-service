@@ -1,10 +1,12 @@
 import socket
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.core.errors import AppError
 from app.core.network import validate_external_http_url
+from app.providers.llm.openai_compatible import OpenAICompatibleProvider
 
 
 @pytest.fixture(autouse=True)
@@ -101,3 +103,97 @@ async def test_provider_url_reports_unresolvable_host(monkeypatch: pytest.Monkey
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.code == "provider_host_unresolvable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("upstream_status", "expected_code"),
+    [
+        (401, "provider_authentication_failed"),
+        (403, "provider_authentication_failed"),
+        (404, "provider_models_endpoint_not_found"),
+        (429, "provider_rate_limited"),
+        (503, "provider_unavailable"),
+    ],
+)
+async def test_provider_connection_reports_actionable_upstream_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    upstream_status: int,
+    expected_code: str,
+) -> None:
+    async def accept_provider_url(url: str) -> str:
+        return url
+
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.validate_external_http_url",
+        accept_provider_url,
+    )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(upstream_status, request=request)
+    )
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=transport,
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        await provider.test_connection()
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == expected_code
+    assert "secret-key" not in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_accepts_models_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def accept_provider_url(url: str) -> str:
+        return url
+
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.validate_external_http_url",
+        accept_provider_url,
+    )
+    requested_paths: list[str] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        return httpx.Response(200, request=request, json={"data": []})
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1/",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handle_request),
+    )
+
+    await provider.test_connection()
+
+    assert requested_paths == ["/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_provider_connection_rejects_non_ascii_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def accept_provider_url(url: str) -> str:
+        return url
+
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.validate_external_http_url",
+        accept_provider_url,
+    )
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="请填写你的 API Key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, request=request, json={"data": []})
+        ),
+    )
+
+    with pytest.raises(AppError) as exc_info:
+        await provider.test_connection()
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == "provider_api_key_invalid_format"

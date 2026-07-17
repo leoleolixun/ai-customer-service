@@ -1,7 +1,7 @@
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.model_gateway.models import (
@@ -82,6 +82,16 @@ class ModelGatewayRepository:
             ),
         )
         return cast(AIProviderAccount | None, await self.session.scalar(statement))
+
+    async def count_model_configs_for_account(self, account_id: UUID) -> int:
+        statement = select(func.count(AIModelConfig.id)).where(
+            AIModelConfig.provider_account_id == account_id
+        )
+        return int(await self.session.scalar(statement) or 0)
+
+    async def delete_account(self, account: AIProviderAccount) -> None:
+        await self.session.delete(account)
+        await self.session.flush()
 
     async def create_model_config(
         self,

@@ -45,6 +45,7 @@ export interface ProviderAccount {
   kind: 'fake' | 'openai_compatible';
   base_url: string | null;
   has_api_key: boolean;
+  can_manage: boolean;
   status: 'draft' | 'ready' | 'disabled';
   created_at: string;
   updated_at: string;

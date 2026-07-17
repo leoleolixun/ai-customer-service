@@ -9,6 +9,7 @@ from app.domains.model_gateway.schemas import (
     ModelConfigResponse,
     ProviderAccountCreate,
     ProviderAccountResponse,
+    ProviderAccountUpdate,
     ProviderTestResponse,
 )
 from app.domains.model_gateway.service import ModelGatewayService
@@ -43,6 +44,44 @@ async def list_provider_accounts(
     session: SessionDependency,
 ) -> list[ProviderAccountResponse]:
     return await ModelGatewayService(session).list_accounts(actor)
+
+
+@router.patch(
+    "/provider-accounts/{account_id}",
+    response_model=ProviderAccountResponse,
+    operation_id="updateProviderAccount",
+)
+async def update_provider_account(
+    account_id: UUID,
+    body: ProviderAccountUpdate,
+    request: Request,
+    actor: AIManagerDependency,
+    session: SessionDependency,
+) -> ProviderAccountResponse:
+    return await ModelGatewayService(session).update_account(
+        account_id=account_id,
+        request=body,
+        actor=actor,
+        request_id=request.state.request_id,
+    )
+
+
+@router.delete(
+    "/provider-accounts/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="deleteProviderAccount",
+)
+async def delete_provider_account(
+    account_id: UUID,
+    request: Request,
+    actor: AIManagerDependency,
+    session: SessionDependency,
+) -> None:
+    await ModelGatewayService(session).delete_account(
+        account_id=account_id,
+        actor=actor,
+        request_id=request.state.request_id,
+    )
 
 
 @router.post(

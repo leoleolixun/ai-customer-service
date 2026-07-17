@@ -10,27 +10,95 @@ from app.providers.llm.base import ChatChunk, ChatMessage
 
 
 class OpenAICompatibleProvider:
-    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: float = 30.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.transport = transport
 
     async def test_connection(self) -> None:
         await validate_external_http_url(self.base_url)
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                follow_redirects=False,
+                transport=self.transport,
+            ) as client:
                 response = await client.get(
                     f"{self.base_url}/models",
                     headers=self._headers,
                 )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except UnicodeEncodeError as exc:
             raise AppError(
                 status_code=400,
-                code="provider_connection_failed",
-                title="Provider connection failed",
-                detail="The provider endpoint could not be verified.",
+                code="provider_api_key_invalid_format",
+                title="Provider API key format is invalid",
+                detail=(
+                    "The API key must contain ASCII characters only. "
+                    "Do not include labels, quotes, or the Bearer prefix."
+                ),
             ) from exc
+        except httpx.TimeoutException as exc:
+            raise AppError(
+                status_code=400,
+                code="provider_connection_timeout",
+                title="Provider connection timed out",
+                detail="The provider did not respond within 10 seconds.",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AppError(
+                status_code=400,
+                code="provider_connection_unreachable",
+                title="Provider connection failed",
+                detail="Could not connect to the provider. Check its Base URL, DNS, and TLS.",
+            ) from exc
+
+        if 200 <= response.status_code < 300:
+            return
+        if response.status_code in {401, 403}:
+            raise AppError(
+                status_code=400,
+                code="provider_authentication_failed",
+                title="Provider authentication failed",
+                detail="The provider rejected the API key. Enter a valid, unexpired key.",
+            )
+        if response.status_code == 404:
+            raise AppError(
+                status_code=400,
+                code="provider_models_endpoint_not_found",
+                title="Provider models endpoint not found",
+                detail=(
+                    "The provider does not expose GET /models at this Base URL. "
+                    "Enter the API root, not a /chat/completions endpoint."
+                ),
+            )
+        if response.status_code == 429:
+            raise AppError(
+                status_code=400,
+                code="provider_rate_limited",
+                title="Provider rate limit reached",
+                detail="The provider rate-limited the connection test. Try again later.",
+            )
+        if response.status_code >= 500:
+            raise AppError(
+                status_code=400,
+                code="provider_unavailable",
+                title="Provider unavailable",
+                detail="The provider is temporarily unavailable. Try again later.",
+            )
+        raise AppError(
+            status_code=400,
+            code="provider_connection_failed",
+            title="Provider connection failed",
+            detail=f"The provider rejected the connection test with HTTP {response.status_code}.",
+        )
 
     async def stream(
         self,
@@ -53,7 +121,9 @@ class OpenAICompatibleProvider:
         }
         try:
             async with httpx.AsyncClient(
-                timeout=self.timeout_seconds, follow_redirects=False
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+                transport=self.transport,
             ) as client:
                 async with client.stream(
                     "POST",
@@ -92,7 +162,9 @@ class OpenAICompatibleProvider:
             payload["dimensions"] = dimensions
         try:
             async with httpx.AsyncClient(
-                timeout=self.timeout_seconds, follow_redirects=False
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+                transport=self.transport,
             ) as client:
                 response = await client.post(
                     f"{self.base_url}/embeddings",

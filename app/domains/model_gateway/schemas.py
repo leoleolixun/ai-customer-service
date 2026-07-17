@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.domains.model_gateway.models import (
     ModelPurpose,
@@ -12,11 +12,31 @@ from app.domains.model_gateway.models import (
 )
 
 
+def validate_provider_api_key(value: SecretStr | None) -> SecretStr | None:
+    if value is None:
+        return None
+    raw_value = value.get_secret_value()
+    if not raw_value or raw_value != raw_value.strip():
+        raise ValueError("api_key must not be blank or contain surrounding whitespace")
+    if not raw_value.isascii():
+        raise ValueError("api_key must contain ASCII characters only")
+    if any(character.isspace() for character in raw_value):
+        raise ValueError("api_key must not contain whitespace")
+    if raw_value.lower().startswith("bearer "):
+        raise ValueError("api_key must not include the Bearer prefix")
+    return value
+
+
 class ProviderAccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     kind: ProviderKind
     base_url: str | None = Field(default=None, max_length=500)
-    api_key: SecretStr | None = None
+    api_key: SecretStr | None = Field(
+        default=None,
+        description="Provider API key using ASCII characters, without a Bearer prefix.",
+    )
+
+    _validate_api_key = field_validator("api_key")(validate_provider_api_key)
 
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "ProviderAccountCreate":
@@ -24,6 +44,31 @@ class ProviderAccountCreate(BaseModel):
             not self.base_url or self.api_key is None
         ):
             raise ValueError("base_url and api_key are required for OpenAI-compatible providers")
+        return self
+
+
+class ProviderAccountUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_url: str | None = Field(default=None, max_length=500)
+    api_key: SecretStr | None = Field(
+        default=None,
+        description="Replacement API key using ASCII characters, without a Bearer prefix.",
+    )
+
+    _validate_api_key = field_validator("api_key")(validate_provider_api_key)
+
+    @model_validator(mode="after")
+    def validate_update_fields(self) -> "ProviderAccountUpdate":
+        if not self.model_fields_set:
+            raise ValueError("at least one provider field must be supplied")
+        for field_name in self.model_fields_set:
+            value = getattr(self, field_name)
+            if value is None:
+                raise ValueError(f"{field_name} cannot be null")
+            if isinstance(value, str) and not value.strip():
+                raise ValueError(f"{field_name} cannot be blank")
+            if isinstance(value, SecretStr) and not value.get_secret_value().strip():
+                raise ValueError(f"{field_name} cannot be blank")
         return self
 
 
@@ -37,6 +82,7 @@ class ProviderAccountResponse(BaseModel):
     kind: ProviderKind
     base_url: str | None
     has_api_key: bool
+    can_manage: bool
     status: ProviderStatus
     created_at: datetime
     updated_at: datetime

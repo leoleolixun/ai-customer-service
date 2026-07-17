@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import jwt
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -377,3 +378,103 @@ async def test_fake_model_configuration_can_be_tested_and_activated(
     )
     assert deactivated.status_code == 200, deactivated.text
     assert deactivated.json()["status"] == "inactive"
+
+    in_use = await client.delete(
+        f"/v1/admin/ai/provider-accounts/{account.json()['id']}",
+        headers=headers_a,
+    )
+    assert in_use.status_code == 409
+    assert in_use.json()["code"] == "provider_account_in_use"
+
+
+async def test_provider_account_can_be_updated_and_deleted_without_exposing_secret(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_a, tenant_b = await create_staff_fixtures(session_factory)
+    token_a = await login(
+        client,
+        {
+            "email": "admin@example.com",
+            "password": "tenant-password",
+            "tenant_id": str(tenant_a.id),
+        },
+    )
+    token_b = await login(
+        client,
+        {
+            "email": "admin@example.com",
+            "password": "tenant-password",
+            "tenant_id": str(tenant_b.id),
+        },
+    )
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    async def accept_provider_url(url: str) -> str:
+        return url.rstrip("/")
+
+    monkeypatch.setattr(
+        "app.domains.model_gateway.service.validate_external_http_url",
+        accept_provider_url,
+    )
+    created = await client.post(
+        "/v1/admin/ai/provider-accounts",
+        headers=headers_a,
+        json={
+            "name": "GLM",
+            "kind": "openai_compatible",
+            "base_url": "https://old-provider.example.com/v1",
+            "api_key": "old-secret",
+        },
+    )
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
+    assert created.json()["can_manage"] is True
+    assert created.json()["has_api_key"] is True
+    assert "api_key" not in created.json()
+
+    invalid_key = await client.patch(
+        f"/v1/admin/ai/provider-accounts/{account_id}",
+        headers=headers_a,
+        json={"api_key": "请填写你的 API Key"},
+    )
+    assert invalid_key.status_code == 422
+
+    updated = await client.patch(
+        f"/v1/admin/ai/provider-accounts/{account_id}",
+        headers=headers_a,
+        json={
+            "name": "GLM production",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+            "api_key": "replacement-secret",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "GLM production"
+    assert updated.json()["base_url"] == "https://open.bigmodel.cn/api/paas/v4"
+    assert updated.json()["status"] == "draft"
+    assert "replacement-secret" not in updated.text
+
+    cross_tenant_update = await client.patch(
+        f"/v1/admin/ai/provider-accounts/{account_id}",
+        headers=headers_b,
+        json={"name": "stolen"},
+    )
+    cross_tenant_delete = await client.delete(
+        f"/v1/admin/ai/provider-accounts/{account_id}",
+        headers=headers_b,
+    )
+    assert cross_tenant_update.status_code == 404
+    assert cross_tenant_delete.status_code == 404
+
+    deleted = await client.delete(
+        f"/v1/admin/ai/provider-accounts/{account_id}",
+        headers=headers_a,
+    )
+    assert deleted.status_code == 204
+
+    accounts = await client.get("/v1/admin/ai/provider-accounts", headers=headers_a)
+    assert accounts.status_code == 200
+    assert all(account["id"] != account_id for account in accounts.json())
