@@ -13,6 +13,7 @@ dist/
 build/
 *.egg-info/
 data/
+eval/runs/
 node_modules/
 packages/*/dist/
 packages/*/coverage/
