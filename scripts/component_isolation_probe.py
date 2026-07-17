@@ -157,6 +157,14 @@ async def verify_redis_isolation(left: TenantFixture, right: TenantFixture) -> d
     limiter = RedisRateLimiter(redis)
     created_keys: list[str] = []
     try:
+        fixtures = (left, right)
+        existing_keys: dict[UUID, set[str]] = {}
+        for fixture in fixtures:
+            pattern = f"rate:v1:{fixture.tenant_id}:{fixture.application_id}:*"
+            existing_keys[fixture.tenant_id] = {
+                str(key) async for key in redis.scan_iter(match=pattern)
+            }
+
         await limiter.check(
             tenant_id=left.tenant_id,
             application_id=left.application_id,
@@ -169,14 +177,16 @@ async def verify_redis_isolation(left: TenantFixture, right: TenantFixture) -> d
             subject=marker,
             limit=10,
         )
-        for fixture in (left, right):
+        for fixture in fixtures:
             pattern = f"rate:v1:{fixture.tenant_id}:{fixture.application_id}:*"
-            matches = [str(key) async for key in redis.scan_iter(match=pattern)]
-            if len(matches) != 1:
+            current_keys = {str(key) async for key in redis.scan_iter(match=pattern)}
+            new_keys = current_keys - existing_keys[fixture.tenant_id]
+            if len(new_keys) != 1:
                 raise RuntimeError(
-                    f"expected one isolated Redis key for {fixture.tenant_id}, found {len(matches)}"
+                    "expected one new isolated Redis key for "
+                    f"{fixture.tenant_id}, found {len(new_keys)}"
                 )
-            created_keys.extend(matches)
+            created_keys.extend(new_keys)
         if len(set(created_keys)) != 2:
             raise RuntimeError("the two tenants shared a Redis rate-limit key")
         return {"isolated_keys": len(created_keys), "shared_keys": 0}
