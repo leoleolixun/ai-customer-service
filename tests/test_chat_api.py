@@ -32,9 +32,20 @@ from app.providers.storage.memory import MemoryObjectStorage
 def test_sensitive_requests_are_routed_to_human_support() -> None:
     assert ConversationService._requires_human("Please refund this order")
     assert ConversationService._requires_human("我要取消订单")
+    assert ConversationService._requires_human("请现在直接给我退款")
+    assert ConversationService._requires_human("我4天前购买的商品，可以退款吗？")  # noqa: RUF001
     assert not ConversationService._requires_human("What is your return policy?")
+    assert not ConversationService._requires_human("给我列出具体退款规则")
     assert "Contact an agent" in HUMAN_REQUIRED_RESPONSE
     assert "paused" not in HUMAN_REQUIRED_RESPONSE
+
+
+def test_refund_policy_queries_expand_retrieval_terms() -> None:
+    content = "给我列出具体退款规则"
+    assert ConversationService._retrieval_query(content) == f"{content} 退货"
+    assert ConversationService._retrieval_query("普通商品可以退货吗？") == (  # noqa: RUF001
+        "普通商品可以退货吗？"  # noqa: RUF001
+    )
 
 
 @pytest.mark.parametrize(

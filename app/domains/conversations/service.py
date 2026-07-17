@@ -627,7 +627,7 @@ class ConversationService:
             retrieved = await KnowledgeBaseService(self.session).search_for_application(
                 tenant_id=principal.tenant_id,
                 application_id=principal.application_id,
-                query=content,
+                query=self._retrieval_query(content),
                 top_k=5,
             )
             eligible_evidence = self._eligible_evidence(retrieved)
@@ -991,6 +991,33 @@ class ConversationService:
     @staticmethod
     def _requires_human(content: str) -> bool:
         normalized = " ".join(content.casefold().split())
+        explicit_action_patterns = (
+            r"\b(?:please\s+)?(?:issue|process|send)\s+(?:me\s+)?(?:a\s+)?refund\b",
+            r"\brefund\s+(?:this|my|the)\s+(?:order|payment|charge)\b",
+            r"(?:帮我|替我|给我)(?:办理|执行|申请|发起|处理|原路)?退款",
+            r"(?:我要|要求|立即|立刻|马上|现在|直接|原路|执行|办理|发起|申请)退款",
+        )
+        if any(re.search(pattern, normalized) for pattern in explicit_action_patterns):
+            return True
+
+        policy_markers = (
+            "refund policy",
+            "refund rule",
+            "return policy",
+            "return rule",
+            "refund conditions",
+            "退款规则",
+            "退款政策",
+            "退款条件",
+            "退款说明",
+            "退货规则",
+            "退货政策",
+            "退货条件",
+            "退货说明",
+        )
+        if any(marker in normalized for marker in policy_markers):
+            return False
+
         phrases = (
             "refund",
             "cancel my order",
@@ -1027,6 +1054,23 @@ class ConversationService:
             "值班工程师",
         )
         return any(phrase in normalized for phrase in phrases)
+
+    @staticmethod
+    def _retrieval_query(content: str) -> str:
+        normalized = " ".join(content.casefold().split())
+        refund_policy_markers = (
+            "refund policy",
+            "refund rule",
+            "refund conditions",
+            "退款规则",
+            "退款政策",
+            "退款条件",
+            "退款说明",
+        )
+        if not any(marker in normalized for marker in refund_policy_markers):
+            return content
+        expansion = "return" if "refund" in normalized else "退货"
+        return f"{content} {expansion}"
 
     @staticmethod
     def _requires_security_refusal(content: str) -> bool:
