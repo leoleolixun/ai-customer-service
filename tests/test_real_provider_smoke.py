@@ -72,6 +72,8 @@ async def test_real_provider_report_covers_chat_and_embedding_without_content() 
 
     assert report["passed"] is True
     assert report["chat"]["samples"] == 3
+    assert report["chat"]["temperature"] == 0.2
+    assert report["chat"]["max_tokens"] == 256
     assert report["chat"]["runs"][0]["response_characters"] == 13
     assert "response" not in report["chat"]["runs"][0]
     assert report["embedding"]["returned_dimensions"] == 4

@@ -50,6 +50,8 @@ class SmokeOptions:
     samples: int
     timeout: float
     first_token_target_ms: float
+    temperature: float = 0.2
+    max_tokens: int = 256
     embedding_model: str | None = None
     embedding_dimensions: int = 0
 
@@ -66,6 +68,8 @@ async def run_chat_sample(
     provider: SmokeProvider,
     *,
     model: str,
+    temperature: float = 0.2,
+    max_tokens: int = 256,
 ) -> dict[str, Any]:
     started = perf_counter()
     first_token_ms: float | None = None
@@ -81,8 +85,8 @@ async def run_chat_sample(
             )
         ],
         model=model,
-        temperature=0,
-        max_tokens=32,
+        temperature=temperature,
+        max_tokens=max_tokens,
     ):
         if chunk.text:
             if first_token_ms is None:
@@ -110,7 +114,13 @@ async def run_smoke(provider: SmokeProvider, options: SmokeOptions) -> dict[str,
     connection_ms = round((perf_counter() - connection_started) * 1000, 3)
 
     samples = [
-        await run_chat_sample(provider, model=options.chat_model) for _ in range(options.samples)
+        await run_chat_sample(
+            provider,
+            model=options.chat_model,
+            temperature=options.temperature,
+            max_tokens=options.max_tokens,
+        )
+        for _ in range(options.samples)
     ]
     first_token_values = [float(sample["first_token_ms"]) for sample in samples]
     completion_values = [float(sample["completed_ms"]) for sample in samples]
@@ -152,6 +162,8 @@ async def run_smoke(provider: SmokeProvider, options: SmokeOptions) -> dict[str,
         "chat": {
             "model": options.chat_model,
             "samples": options.samples,
+            "temperature": options.temperature,
+            "max_tokens": options.max_tokens,
             "first_token_p50_ms": percentile(first_token_values, 0.50),
             "first_token_p95_ms": first_token_p95,
             "first_token_target_ms": options.first_token_target_ms,
@@ -182,6 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--first-token-target-ms", type=float, default=5000.0)
+    parser.add_argument("--temperature", type=float, default=0.2)
+    parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--embedding-model")
     parser.add_argument("--embedding-dimensions", type=int, default=0)
     parser.add_argument("--output", type=Path)
@@ -191,8 +205,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.samples <= 0 or args.timeout <= 0 or args.first_token_target_ms <= 0:
-        print("samples, timeout, and first-token target must be positive", file=sys.stderr)
+    if (
+        args.samples <= 0
+        or args.timeout <= 0
+        or args.first_token_target_ms <= 0
+        or args.temperature < 0
+        or args.temperature > 2
+        or args.max_tokens <= 0
+    ):
+        print(
+            "samples, timeout, first-token target, temperature, or max tokens are invalid",
+            file=sys.stderr,
+        )
         return 2
     if bool(args.embedding_model) != (args.embedding_dimensions > 0):
         print(
@@ -211,6 +235,8 @@ def main() -> int:
         samples=args.samples,
         timeout=args.timeout,
         first_token_target_ms=args.first_token_target_ms,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
         embedding_model=args.embedding_model,
         embedding_dimensions=args.embedding_dimensions,
     )
