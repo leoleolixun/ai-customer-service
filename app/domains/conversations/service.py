@@ -587,16 +587,16 @@ class ConversationService:
                 top_k=5,
             )
             eligible_evidence = self._eligible_evidence(retrieved)
-            if self._contains_indirect_prompt_injection(eligible_evidence):
+            conflicting_evidence = self._conflicting_evidence(content, eligible_evidence)
+            selected_evidence = conflicting_evidence or self._evidence_gate(eligible_evidence)
+            if self._contains_indirect_prompt_injection(selected_evidence):
                 evidence = []
                 grounding_status = "unsafe_evidence"
+            elif conflicting_evidence:
+                evidence = conflicting_evidence
+                grounding_status = "conflicting_evidence"
             else:
-                conflicting_evidence = self._conflicting_evidence(content, eligible_evidence)
-                if conflicting_evidence:
-                    evidence = conflicting_evidence
-                    grounding_status = "conflicting_evidence"
-                else:
-                    evidence = self._evidence_gate(eligible_evidence)
+                evidence = selected_evidence
         previous = await self.repository.get_recent_completed_messages(
             tenant_id=principal.tenant_id, conversation_id=conversation.id
         )
