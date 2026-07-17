@@ -149,7 +149,7 @@ sudo ENV_FILE=/etc/ai-customer-service/production.env \
 4. 在停止写入的状态下创建当前状态安全备份；
 5. 删除并重建应用 PostgreSQL 数据库，恢复 custom dump；
 6. 清空并恢复 MinIO 应用 bucket；
-7. 清空 Redis DB 0；
+7. 仅清空 `APP_REDIS_URL` 指定的 Redis DB；
 8. 启动 MinIO 初始化、API 和 Worker；
 9. 校验 readiness、Alembic revision 和 MinIO 对象数量。
 

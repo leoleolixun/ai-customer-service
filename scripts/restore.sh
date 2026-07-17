@@ -84,6 +84,12 @@ if [[ "${backup_image}" != "${current_image}" && "${allow_image_mismatch}" != tr
     die "APP_IMAGE mismatch: backup=${backup_image}, configured=${current_image}. Set the matching immutable image or pass --allow-image-mismatch after compatibility review."
 fi
 
+redis_url="$(read_key "${ENV_FILE}" APP_REDIS_URL)"
+redis_database="${redis_url%%\?*}"
+redis_database="${redis_database##*/}"
+[[ "${redis_database}" =~ ^[0-9]+$ ]] \
+    || die "APP_REDIS_URL must end with a numeric Redis database index"
+
 if [[ -z "${confirmation}" && -t 0 ]]; then
     printf 'This replaces PostgreSQL and the application MinIO bucket, then clears Redis.\n' >&2
     printf 'Type exactly "%s": ' "${expected_confirmation}" >&2
@@ -150,8 +156,8 @@ printf 'Replacing MinIO application bucket...\n'
 
 printf 'Clearing non-authoritative Redis state...\n'
 "${COMPOSE[@]}" exec -T redis sh -eu -c '
-    REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli FLUSHDB >/dev/null
-'
+    REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -n "$1" FLUSHDB >/dev/null
+' -- "${redis_database}"
 
 printf 'Starting application services...\n'
 "${COMPOSE[@]}" run --rm minio-init

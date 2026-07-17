@@ -38,7 +38,7 @@ require_command sha256sum
 mkdir -p -- "${BACKUP_ROOT}"
 BACKUP_ROOT="$(cd -- "${BACKUP_ROOT}" && pwd -P)"
 [[ -n "${BACKUP_ROOT}" && "${BACKUP_ROOT}" != "/" ]] || die "unsafe backup root"
-chmod 700 -- "${BACKUP_ROOT}"
+chmod 700 "${BACKUP_ROOT}"
 
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 "${COMPOSE[@]}" config --quiet
@@ -146,7 +146,7 @@ fi
         | LC_ALL=C sort -z \
         | xargs -0 sha256sum >SHA256SUMS
 )
-chmod -R go-rwx -- "${tmp_dir}"
+chmod -R go-rwx "${tmp_dir}"
 
 ENV_FILE="${ENV_FILE}" COMPOSE_FILE="${COMPOSE_FILE}" \
     "${VERIFY_SCRIPT}" "${tmp_dir}"
