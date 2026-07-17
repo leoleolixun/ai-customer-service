@@ -36,6 +36,7 @@ def test_sensitive_requests_are_routed_to_human_support() -> None:
     assert ConversationService._requires_human("我4天前购买的商品，可以退款吗？")  # noqa: RUF001
     assert not ConversationService._requires_human("What is your return policy?")
     assert not ConversationService._requires_human("给我列出具体退款规则")
+    assert not ConversationService._requires_human("如果用过的商品可以退款吗？")  # noqa: RUF001
     assert "Contact an agent" in HUMAN_REQUIRED_RESPONSE
     assert "paused" not in HUMAN_REQUIRED_RESPONSE
 
@@ -43,8 +44,24 @@ def test_sensitive_requests_are_routed_to_human_support() -> None:
 def test_refund_policy_queries_expand_retrieval_terms() -> None:
     content = "给我列出具体退款规则"
     assert ConversationService._retrieval_query(content) == f"{content} 退货"
+    conditional = "如果用过的商品可以退款吗？"  # noqa: RUF001
+    assert ConversationService._retrieval_query(conditional) == f"{conditional} 退货"
     assert ConversationService._retrieval_query("普通商品可以退货吗？") == (  # noqa: RUF001
         "普通商品可以退货吗？"  # noqa: RUF001
+    )
+
+
+def test_refund_wording_is_interpreted_only_when_return_evidence_exists() -> None:
+    return_evidence = [_retrieved_evidence("Products must be unused to qualify for return.")]
+    interpretation = ConversationService._query_interpretation(
+        "Can this item be refunded?", return_evidence
+    )
+    assert interpretation is not None
+    assert "Answer return eligibility" in interpretation
+    assert ConversationService._query_interpretation("Can this item be refunded?", []) is None
+    assert (
+        ConversationService._query_interpretation("Can this item be returned?", return_evidence)
+        is None
     )
 
 
@@ -240,6 +257,10 @@ def test_grounding_prompt_instructs_the_selected_response_language() -> None:
 
     assert "Respond in English" in english
     assert "Respond in Simplified Chinese" in chinese
+    assert "a used item does not meet that condition" in english
+    assert "a used item does not meet that condition" in chinese
+    assert "plain text without Markdown" in english
+    assert "plain text without Markdown" in chinese
 
 
 def _retrieved_evidence(content: str, *, title: str = "Support article") -> RetrievedChunk:
