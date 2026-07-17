@@ -15,3 +15,6 @@ def test_restore_keeps_periodic_scheduler_inside_the_maintenance_window() -> Non
 
     assert "stop -t 60 api worker beat" in script
     assert "up -d --no-deps api worker beat" in script
+    assert 'read_key "${ENV_FILE}" APP_REDIS_URL' not in script
+    assert "Compose-rendered APP_REDIS_URL" in script
+    assert "run --rm --no-deps --entrypoint /bin/sh api" in script
