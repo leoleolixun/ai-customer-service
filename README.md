@@ -119,5 +119,5 @@ uv run python scripts/check_secrets.py
 
 V1.0 开发范围已经收口，当前发布结论和仍需独立人工完成的门禁以
 [`docs/acceptance/v1.0.md`](docs/acceptance/v1.0.md) 为准。冻结运行候选为 `9c34121`，自动化、真实组件、
-真实 Provider、性能和灾备已经通过；独立 30 分钟接入、30 条人工复核和同一 Commit 的云端 CI 尚未完成，
+真实 Provider、性能、灾备和同一 Commit 的云端 CI 已经通过；独立 30 分钟接入和 30 条人工复核尚未完成，
 因此整版结论仍为“不通过”，不允许发布 `v1.0.0` Tag。
