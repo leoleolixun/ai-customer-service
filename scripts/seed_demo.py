@@ -191,8 +191,10 @@ async def seed_demo(definition: DemoDefinition, password: str) -> dict[str, str]
             )
             session.add(document)
             await session.flush()
+            indexed_content = f"{source_title}\n{source_content}"
+            lexical_text = lexicalize(indexed_content)
             embedding = await FakeEmbeddingProvider().embed(
-                texts=[source_content], model="fake-embedding", dimensions=32
+                texts=[indexed_content], model="fake-embedding", dimensions=32
             )
             session.add_all(
                 [
@@ -213,8 +215,8 @@ async def seed_demo(definition: DemoDefinition, password: str) -> dict[str, str]
                         content=source_content,
                         heading_path=[source_title],
                         source_locator=document.source_url or document.source_filename,
-                        lexical_text=lexicalize(source_content),
-                        lexical_vector=lexicalize(source_content),
+                        lexical_text=lexical_text,
+                        lexical_vector=lexical_text,
                         content_hash=hashlib.sha256(content).hexdigest(),
                         embedding=embedding[0],
                         embedding_model="fake-embedding",

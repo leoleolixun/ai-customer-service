@@ -20,7 +20,7 @@ from app.domains.knowledge.models import (
     KnowledgeChunk,
     KnowledgeDocument,
 )
-from app.domains.knowledge.parsing import ChunkDraft
+from app.domains.knowledge.parsing import ChunkDraft, lexicalize
 from app.domains.model_gateway.models import AIModelConfig, AIProviderAccount, ProviderStatus
 from app.domains.tenants.models import Tenant
 
@@ -338,28 +338,32 @@ class KnowledgeRepository:
                 KnowledgeChunk.document_id == document.id,
             )
         )
-        chunks = [
-            KnowledgeChunk(
-                tenant_id=document.tenant_id,
-                knowledge_base_id=document.knowledge_base_id,
-                document_id=document.id,
-                document_version=document.version,
-                chunk_index=index,
-                content=draft.content,
-                heading_path=draft.heading_path,
-                source_locator=document.source_url or document.source_filename,
-                lexical_text=draft.lexical_text,
-                lexical_vector=draft.lexical_text,
-                content_hash=draft.content_hash,
-                embedding=embeddings[index],
-                embedding_model=knowledge_base.embedding_model_name,
-                embedding_version=knowledge_base.embedding_version,
-                embedding_dimension=knowledge_base.embedding_dimension,
-                chunking_version=knowledge_base.chunking_version,
-                status=ChunkStatus.ACTIVE,
+        chunks: list[KnowledgeChunk] = []
+        for index, draft in enumerate(drafts):
+            lexical_text = lexicalize(
+                "\n".join(dict.fromkeys([document.title, *draft.heading_path, draft.content]))
             )
-            for index, draft in enumerate(drafts)
-        ]
+            chunks.append(
+                KnowledgeChunk(
+                    tenant_id=document.tenant_id,
+                    knowledge_base_id=document.knowledge_base_id,
+                    document_id=document.id,
+                    document_version=document.version,
+                    chunk_index=index,
+                    content=draft.content,
+                    heading_path=draft.heading_path,
+                    source_locator=document.source_url or document.source_filename,
+                    lexical_text=lexical_text,
+                    lexical_vector=lexical_text,
+                    content_hash=draft.content_hash,
+                    embedding=embeddings[index],
+                    embedding_model=knowledge_base.embedding_model_name,
+                    embedding_version=knowledge_base.embedding_version,
+                    embedding_dimension=knowledge_base.embedding_dimension,
+                    chunking_version=knowledge_base.chunking_version,
+                    status=ChunkStatus.ACTIVE,
+                )
+            )
         self.session.add_all(chunks)
         await self.session.flush()
 

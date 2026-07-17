@@ -59,20 +59,50 @@ def test_conflicting_numeric_sources_are_detected() -> None:
     evidence = [
         RetrievedChunk(
             chunk=KnowledgeChunk(content="节日商品可以在 60 天内退货。"),
-            document=KnowledgeDocument(id=uuid4(), title="公告 A"),
+            document=KnowledgeDocument(id=uuid4(), title="节日退货公告 A"),
             score=1,
             vector_similarity=1,
             keyword_score=1,
         ),
         RetrievedChunk(
             chunk=KnowledgeChunk(content="节日商品可以在 90 天内退货。"),
-            document=KnowledgeDocument(id=uuid4(), title="公告 B"),
+            document=KnowledgeDocument(id=uuid4(), title="节日退货公告 B"),
             score=0.9,
             vector_similarity=0.9,
             keyword_score=0.9,
         ),
     ]
     assert ConversationService._has_conflicting_evidence("节日商品退货期限是多久?", evidence)
+
+
+def test_unrelated_specific_policy_does_not_conflict_with_general_question() -> None:
+    evidence = [
+        RetrievedChunk(
+            chunk=KnowledgeChunk(content="普通商品可以在签收后 30 天内退货。"),
+            document=KnowledgeDocument(id=uuid4(), title="普通退货规则"),
+            score=1,
+            vector_similarity=0.8,
+            keyword_score=0.5,
+        ),
+        RetrievedChunk(
+            chunk=KnowledgeChunk(content="节日商品可以在签收后 60 天内退货。"),
+            document=KnowledgeDocument(id=uuid4(), title="节日退货公告 A"),
+            score=0.9,
+            vector_similarity=0.7,
+            keyword_score=0.3,
+        ),
+        RetrievedChunk(
+            chunk=KnowledgeChunk(content="节日商品可以在签收后 90 天内退货。"),
+            document=KnowledgeDocument(id=uuid4(), title="节日退货公告 B"),
+            score=0.8,
+            vector_similarity=0.7,
+            keyword_score=0.3,
+        ),
+    ]
+
+    assert not ConversationService._has_conflicting_evidence(
+        "普通商品签收后多久可以退货?", evidence
+    )
 
 
 def test_evidence_gate_uses_the_threshold_attached_to_each_knowledge_base() -> None:
@@ -94,6 +124,25 @@ def test_evidence_gate_uses_the_threshold_attached_to_each_knowledge_base() -> N
     )
 
     assert ConversationService._evidence_gate([rejected, accepted]) == [accepted]
+
+
+def test_evidence_gate_removes_candidates_far_below_the_best_match() -> None:
+    relevant = RetrievedChunk(
+        chunk=KnowledgeChunk(content="The relevant policy"),
+        document=KnowledgeDocument(id=uuid4(), title="Relevant policy"),
+        score=1,
+        vector_similarity=0.6,
+        keyword_score=0.5,
+    )
+    generic = RetrievedChunk(
+        chunk=KnowledgeChunk(content="A generic policy"),
+        document=KnowledgeDocument(id=uuid4(), title="Generic policy"),
+        score=0.9,
+        vector_similarity=0.6,
+        keyword_score=0.3,
+    )
+
+    assert ConversationService._evidence_gate([relevant, generic]) == [relevant]
 
 
 def test_chat_history_keeps_latest_messages_within_character_budget() -> None:

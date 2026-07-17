@@ -22,6 +22,7 @@ from app.providers.storage.memory import MemoryObjectStorage
 def test_chinese_customer_wording_expands_to_retrieval_terms() -> None:
     terms = lexicalize("下单后可以马上去门店拿货吗").split()
     assert {"订单", "自提", "到店"} <= set(terms)
+    assert {"节日", "商品"} <= set(lexicalize("节日商品退货期限").split())
 
 
 def test_chunking_uses_token_overlap_and_preserves_table_rows() -> None:
@@ -242,6 +243,7 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
         )
         assert chunk is not None
         assert chunk.source_locator == "https://docs.example.com/returns"
+        assert "policy" in chunk.lexical_text.split()
         assert chunk.embedding_dimension == 32
         assert chunk.status.value == "active"
 

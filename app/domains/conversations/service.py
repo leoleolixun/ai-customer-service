@@ -92,6 +92,7 @@ LOCALIZED_REFUSALS = {
         ),
     },
 }
+RELATIVE_EVIDENCE_SCORE_FLOOR = 0.9
 
 
 class FeedbackService:
@@ -366,12 +367,13 @@ class ConversationService:
                 query=content,
                 top_k=5,
             )
-            conflicting_evidence = self._conflicting_evidence(content, retrieved)
+            eligible_evidence = self._eligible_evidence(retrieved)
+            conflicting_evidence = self._conflicting_evidence(content, eligible_evidence)
             if conflicting_evidence:
                 evidence = conflicting_evidence
                 grounding_status = "conflicting_evidence"
             else:
-                evidence = self._evidence_gate(retrieved)
+                evidence = self._evidence_gate(eligible_evidence)
         previous = await self.repository.get_recent_completed_messages(
             tenant_id=principal.tenant_id, conversation_id=conversation.id
         )
@@ -673,7 +675,7 @@ class ConversationService:
         return total // 1_000_000
 
     @staticmethod
-    def _evidence_gate(results: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    def _eligible_evidence(results: list[RetrievedChunk]) -> list[RetrievedChunk]:
         return sorted(
             (
                 result
@@ -683,7 +685,28 @@ class ConversationService:
             ),
             key=lambda result: (result.score, result.keyword_score, result.vector_similarity),
             reverse=True,
-        )[:5]
+        )
+
+    @staticmethod
+    def _evidence_gate(results: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        eligible = ConversationService._eligible_evidence(results)
+        if not eligible:
+            return []
+        best_keyword_score = max(result.keyword_score for result in eligible)
+        best_vector_similarity = max(result.vector_similarity for result in eligible)
+        return [
+            result
+            for result in eligible
+            if (
+                result.keyword_score >= result.keyword_score_threshold
+                and result.keyword_score >= best_keyword_score * RELATIVE_EVIDENCE_SCORE_FLOOR
+            )
+            or (
+                result.vector_similarity >= result.vector_similarity_threshold
+                and result.vector_similarity
+                >= best_vector_similarity * RELATIVE_EVIDENCE_SCORE_FLOOR
+            )
+        ][:5]
 
     @staticmethod
     def _requires_human(content: str) -> bool:
@@ -806,6 +829,7 @@ class ConversationService:
             for token in lexicalize(question).split()
             if len(token) >= 2 and any(char.isalnum() for char in token)
         }
+        question_values = set(re.findall(r"\b\d{1,4}\b", question))
         best_pair: tuple[RetrievedChunk, RetrievedChunk] | None = None
         best_similarity = 0.0
         for left, right in combinations(evidence[:10], 2):
@@ -814,6 +838,15 @@ class ConversationService:
             left_values = set(re.findall(r"\b\d{1,4}\b", left.chunk.content))
             right_values = set(re.findall(r"\b\d{1,4}\b", right.chunk.content))
             if not left_values or not right_values or left_values == right_values:
+                continue
+            shared_title_tokens = ConversationService._topic_tokens(left.document.title) & (
+                ConversationService._topic_tokens(right.document.title)
+            )
+            question_title_tokens = question_tokens & shared_title_tokens
+            explicitly_compares_values = bool(
+                question_values & left_values and question_values & right_values
+            )
+            if len(question_title_tokens) < 2 and not explicitly_compares_values:
                 continue
             left_tokens = ConversationService._conflict_tokens(left)
             right_tokens = ConversationService._conflict_tokens(right)
@@ -840,6 +873,14 @@ class ConversationService:
             token
             for token in lexicalize(result.chunk.content).split()
             if any(char.isalnum() for char in token) and not token.isdigit()
+        }
+
+    @staticmethod
+    def _topic_tokens(value: str) -> set[str]:
+        return {
+            token
+            for token in lexicalize(value).split()
+            if len(token) >= 2 and any(char.isalnum() for char in token)
         }
 
     @staticmethod

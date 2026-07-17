@@ -17,6 +17,9 @@ SUPPORTED_MIME_TYPES = {
 LEXICAL_QUERY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "下单": ("订单",),
     "拿货": ("自提", "到店"),
+    "普通商品": ("普通", "商品"),
+    "节日商品": ("节日", "商品"),
+    "节日期间": ("节日",),
 }
 
 

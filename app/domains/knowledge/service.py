@@ -627,7 +627,7 @@ class IngestionService:
             await self.session.commit()
             provider = build_embedding_provider(account)
             embeddings = await provider.embed(
-                texts=[draft.content for draft in drafts],
+                texts=[f"{document.title}\n{draft.content}" for draft in drafts],
                 model=model_config.model_name,
                 dimensions=knowledge_base.embedding_dimension,
             )
