@@ -714,7 +714,7 @@ class ConversationService:
         try:
             await self._ensure_ai_reply_allowed(prepared)
             if prepared.grounding_status != "evidence" or not prepared.evidence:
-                async for event in self._complete_rule_response(prepared, model_config):
+                async for event in self._complete_rule_response(prepared):
                     yield event
                 return
             provider = build_chat_provider(prepared.provider_account)
@@ -791,9 +791,7 @@ class ConversationService:
                 {"code": "model_provider_failed", "message": "The model request failed."},
             )
 
-    async def _complete_rule_response(
-        self, prepared: PreparedChat, model_config: AIModelConfig
-    ) -> AsyncIterator[str]:
+    async def _complete_rule_response(self, prepared: PreparedChat) -> AsyncIterator[str]:
         localized = LOCALIZED_REFUSALS[prepared.locale]
         system_intent = prepared.grounding_status.removeprefix("system_")
         response = LOCALIZED_SYSTEM_RESPONSES[prepared.locale].get(system_intent)
@@ -821,18 +819,6 @@ class ConversationService:
                 message_id=prepared.assistant_message.id,
                 results=prepared.evidence,
             )
-        await self.repository.add_usage(
-            tenant_id=prepared.principal.tenant_id,
-            application_id=prepared.principal.application_id,
-            conversation_id=prepared.conversation.id,
-            message_id=prepared.assistant_message.id,
-            model_config_id=model_config.id,
-            prompt_tokens=0,
-            completion_tokens=0,
-            duration_ms=0,
-            estimated_cost_micros=0,
-            status="completed",
-        )
         await self.session.commit()
         await self.session.refresh(prepared.assistant_message)
         yield self._sse(

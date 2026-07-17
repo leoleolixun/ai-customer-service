@@ -412,16 +412,14 @@ async def test_chat_sse_idempotency_and_user_isolation(
 
     async with session_factory() as session:
         usage_count = await session.scalar(select(func.count(AIUsageRecord.id)))
-    assert usage_count == 1
+    assert usage_count == 0
 
     model_calls = await client.get(
         "/v1/admin/usage/model-calls?status=completed",
         headers=setup["admin_headers"],
     )
     assert model_calls.status_code == 200, model_calls.text
-    assert len(model_calls.json()) == 1
-    assert model_calls.json()[0]["model_name"] == "fake-chat"
-    assert model_calls.json()[0]["conversation_id"] == conversation_id
+    assert model_calls.json() == []
 
 
 async def test_message_history_returns_latest_page_and_supports_before_cursor(
@@ -833,6 +831,10 @@ async def test_chat_uses_only_bound_knowledge_and_returns_citations(
     assert "Fake assistant: How many days are returns allowed?" in streamed.text
     assert '"source_title":"Returns"' in streamed.text
     assert '"source_url":"https://docs.example.com/returns"' in streamed.text
+
+    async with session_factory() as session:
+        usage_count = await session.scalar(select(func.count(AIUsageRecord.id)))
+    assert usage_count == 1
 
     messages = await client.get(
         f"/v1/chat/sessions/{conversation_id}/messages", headers=customer_headers

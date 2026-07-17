@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.errors import AppError
 from app.domains.applications.repository import ApplicationRepository
@@ -35,6 +36,7 @@ class UsageService:
             AIUsageRecord.tenant_id == tenant_id,
             AIUsageRecord.created_at >= start,
             AIUsageRecord.created_at <= end,
+            self._is_provider_call(),
         ]
         if application_id is not None:
             filters.append(AIUsageRecord.application_id == application_id)
@@ -77,6 +79,7 @@ class UsageService:
             AIUsageRecord.tenant_id == tenant_id,
             AIUsageRecord.created_at >= start,
             AIUsageRecord.created_at <= end,
+            self._is_provider_call(),
         ]
         if application_id is not None:
             filters.append(AIUsageRecord.application_id == application_id)
@@ -132,6 +135,16 @@ class UsageService:
                 title="Application not found",
                 detail="The requested application does not exist in this tenant.",
             )
+
+    @staticmethod
+    def _is_provider_call() -> ColumnElement[bool]:
+        # Older releases recorded deterministic rule replies as zero-cost model calls.
+        return or_(
+            AIUsageRecord.status == "failed",
+            AIUsageRecord.prompt_tokens > 0,
+            AIUsageRecord.completion_tokens > 0,
+            AIUsageRecord.duration_ms > 0,
+        )
 
     @classmethod
     def _normalize_range(
