@@ -144,9 +144,21 @@ uv run python scripts/human_review.py prepare \
   --output eval/runs/2026-07-17/human-review.jsonl
 ```
 
-把 `human-review.jsonl` 交给未参与该轮模型输出生成的评审人。评审人必须逐条对照问题、回答和证据填写
-`reviewer`、`factually_correct`、`citations_supported`、`severe_error` 和 `notes`。程序只生成空白表，
-不会自动填写或默认通过。填写完成后合并到原始预测：
+验收负责人先记录空白工作表的 SHA256，并把冻结 Commit、工作表和摘要一起交给未参与该轮模型输出生成的
+评审人。评审人可以直接编辑 JSONL，也可以启动只监听本机的复核页面：
+
+```bash
+uv run python scripts/human_review_server.py \
+  --worksheet eval/runs/2026-07-17/human-review.jsonl \
+  --candidate '<冻结 Commit>' \
+  --expected-sha256 '<验收负责人提供的空白工作表 SHA256>'
+```
+
+页面会显示候选号和工作表摘要，逐条自动保存，并在 30 条字段完整后允许完成检查。服务只监听
+`127.0.0.1`，不要把它反向代理到公网。评审人必须逐条对照问题、回答和证据填写 `reviewer`、
+`factually_correct`、`citations_supported`、`severe_error` 和 `notes`。程序不会自动填写、推断或默认通过。
+
+填写完成后，验收负责人保存已填写工作表的新 SHA256，再合并到原始预测：
 
 ```bash
 uv run python scripts/human_review.py merge \
