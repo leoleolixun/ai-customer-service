@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     customer_token_minutes: int = Field(default=15, ge=1, le=60)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     allow_private_provider_urls: bool = False
+    knowledge_document_limit_per_tenant: int = Field(default=1_000, ge=1)
+    knowledge_storage_limit_bytes_per_tenant: int = Field(
+        default=1024 * 1024 * 1024,
+        ge=10 * 1024 * 1024,
+    )
 
     @field_validator("env")
     @classmethod

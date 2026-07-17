@@ -1,3 +1,4 @@
+import argparse
 import re
 import shutil
 import subprocess
@@ -12,6 +13,32 @@ PATTERNS = {
     "application credential": re.compile(r"\bacs_[a-f0-9]{16}\.[A-Za-z0-9_-]{32,}\b"),
 }
 SKIP_PARTS = {".git", ".venv", "node_modules", "dist", "coverage", "test-results"}
+DEPENDENCY_SKIP_PARTS = {".git", ".venv", "node_modules"}
+DEFAULT_ARTIFACT_PATHS = (
+    "apps/admin/dist",
+    "apps/demo/dist",
+    "packages/sdk/dist",
+    "packages/widget/dist",
+    "playwright-report",
+    "test-results",
+    "eval/runs",
+)
+
+
+def files_under(paths: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    for candidate in paths:
+        if candidate.is_file():
+            files.append(candidate)
+            continue
+        if not candidate.is_dir():
+            continue
+        files.extend(
+            path
+            for path in candidate.rglob("*")
+            if path.is_file() and not DEPENDENCY_SKIP_PARTS.intersection(path.parts)
+        )
+    return files
 
 
 def repository_files(root: Path = ROOT) -> list[Path]:
@@ -25,15 +52,17 @@ def repository_files(root: Path = ROOT) -> list[Path]:
             check=True,
             capture_output=True,
         )
-        return [root / item.decode() for item in result.stdout.split(b"\0") if item]
+        repository = [root / item.decode() for item in result.stdout.split(b"\0") if item]
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return [
+        repository = [
             path
             for path in root.rglob("*")
             if path.is_file()
             and not SKIP_PARTS.intersection(path.relative_to(root).parts)
             and path.name != ".env"
         ]
+    artifacts = files_under([root / relative for relative in DEFAULT_ARTIFACT_PATHS])
+    return list(dict.fromkeys([*repository, *artifacts]))
 
 
 def scan_text(text: str) -> list[str]:
@@ -48,14 +77,30 @@ def scan_text(text: str) -> list[str]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scan repository and release artifacts for secrets"
+    )
+    parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        type=Path,
+        help="Additional file or directory to scan; may be repeated",
+    )
+    args = parser.parse_args()
     findings: list[str] = []
-    for path in repository_files():
+    paths = list(dict.fromkeys([*repository_files(), *files_under(args.path)]))
+    for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         for finding in scan_text(text):
-            findings.append(f"{path.relative_to(ROOT)}:{finding}")
+            try:
+                display_path = path.relative_to(ROOT)
+            except ValueError:
+                display_path = path
+            findings.append(f"{display_path}:{finding}")
     if findings:
         raise SystemExit("Potential secrets found:\n" + "\n".join(findings))
     print("Secret scan passed.")

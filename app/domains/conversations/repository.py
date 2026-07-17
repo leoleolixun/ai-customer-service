@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.conversations.models import (
@@ -81,18 +81,26 @@ class ConversationRepository:
         *,
         tenant_id: UUID,
         conversation_id: UUID,
+        for_update: bool = False,
     ) -> tuple[ConversationMode, ConversationStatus] | None:
         statement = select(Conversation.mode, Conversation.status).where(
             Conversation.id == conversation_id,
             Conversation.tenant_id == tenant_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
         row = (await self.session.execute(statement)).one_or_none()
         if row is None:
             return None
         return row[0], row[1]
 
     async def list_messages(
-        self, *, tenant_id: UUID, conversation_id: UUID, limit: int = 100
+        self,
+        *,
+        tenant_id: UUID,
+        conversation_id: UUID,
+        limit: int = 100,
+        before: Message | None = None,
     ) -> list[Message]:
         statement = (
             select(Message)
@@ -100,10 +108,29 @@ class ConversationRepository:
                 Message.tenant_id == tenant_id,
                 Message.conversation_id == conversation_id,
             )
-            .order_by(Message.created_at, Message.id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(limit)
         )
-        return list(await self.session.scalars(statement))
+        if before is not None:
+            statement = statement.where(
+                or_(
+                    Message.created_at < before.created_at,
+                    and_(Message.created_at == before.created_at, Message.id < before.id),
+                )
+            )
+        messages = list(await self.session.scalars(statement))
+        messages.reverse()
+        return messages
+
+    async def get_message_cursor(
+        self, *, tenant_id: UUID, conversation_id: UUID, message_id: UUID
+    ) -> Message | None:
+        statement = select(Message).where(
+            Message.id == message_id,
+            Message.tenant_id == tenant_id,
+            Message.conversation_id == conversation_id,
+        )
+        return cast(Message | None, await self.session.scalar(statement))
 
     async def get_recent_completed_messages(
         self, *, tenant_id: UUID, conversation_id: UUID, limit: int = 20

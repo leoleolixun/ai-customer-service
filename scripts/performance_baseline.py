@@ -172,12 +172,14 @@ async def prepare_performance_corpus(chunk_count: int) -> UUID:
                         chunk_index=index,
                         content=content,
                         heading_path=["Synthetic performance topics"],
+                        source_locator=document.source_filename,
                         lexical_text=lexicalize(content),
                         lexical_vector=lexicalize(content),
                         content_hash=hashlib.sha256(content.encode()).hexdigest(),
                         embedding=embedding,
                         embedding_model=model.model_name,
                         embedding_version="performance-v1",
+                        embedding_dimension=model.embedding_dimension,
                         chunking_version="performance-v1",
                     )
                     for index, content, embedding in zip(indexes, contents, embeddings, strict=True)

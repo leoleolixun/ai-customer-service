@@ -30,6 +30,11 @@ export interface SupportClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface MessageListOptions {
+  limit?: number;
+  before?: string;
+}
+
 export class SupportClient {
   private readonly baseUrl: string;
   private readonly getToken: SupportClientOptions['getToken'];
@@ -51,8 +56,12 @@ export class SupportClient {
     return this.json(`/v1/chat/sessions/${encodeURIComponent(id)}`);
   }
 
-  listMessages(id: string): Promise<Message[]> {
-    return this.json(`/v1/chat/sessions/${encodeURIComponent(id)}/messages`);
+  listMessages(id: string, options: MessageListOptions = {}): Promise<Message[]> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set('limit', String(options.limit));
+    if (options.before) query.set('before', options.before);
+    const suffix = query.size ? `?${query.toString()}` : '';
+    return this.json(`/v1/chat/sessions/${encodeURIComponent(id)}/messages${suffix}`);
   }
 
   async getCitationSource(conversationId: string, citationId: string): Promise<Blob> {

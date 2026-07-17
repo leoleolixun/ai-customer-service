@@ -15,12 +15,16 @@ class KnowledgeBaseCreate(BaseModel):
     description: str = Field(default="", max_length=4_000)
     embedding_model_config_id: UUID
     embedding_version: str = Field(default="v1", min_length=1, max_length=64)
+    keyword_score_threshold: float = Field(default=0.15, ge=0, le=1)
+    vector_similarity_threshold: float = Field(default=0.72, ge=0, le=1)
 
 
 class KnowledgeBaseUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=4_000)
     status: KnowledgeBaseStatus | None = None
+    keyword_score_threshold: float | None = Field(default=None, ge=0, le=1)
+    vector_similarity_threshold: float | None = Field(default=None, ge=0, le=1)
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -35,6 +39,8 @@ class KnowledgeBaseResponse(BaseModel):
     embedding_dimension: int
     embedding_version: str
     chunking_version: str
+    keyword_score_threshold: float
+    vector_similarity_threshold: float
     status: KnowledgeBaseStatus
     created_at: datetime
     updated_at: datetime

@@ -75,6 +75,8 @@ export interface KnowledgeBase {
   embedding_dimension: number;
   embedding_version: string;
   chunking_version: string;
+  keyword_score_threshold: number;
+  vector_similarity_threshold: number;
   status: 'active' | 'disabled';
   created_at: string;
   updated_at: string;

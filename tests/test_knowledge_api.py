@@ -1,15 +1,19 @@
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from _pytest.monkeypatch import MonkeyPatch
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import AppError
 from app.core.security import hash_password
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
-from app.domains.knowledge.parsing import lexicalize
+from app.domains.knowledge.models import KnowledgeChunk, KnowledgeDocument
+from app.domains.knowledge.parsing import _tokens, chunk_text, lexicalize
+from app.domains.knowledge.repository import KnowledgeRepository
 from app.domains.knowledge.service import IngestionService
 from app.domains.tenants.models import Tenant
 from app.providers.storage.memory import MemoryObjectStorage
@@ -18,6 +22,52 @@ from app.providers.storage.memory import MemoryObjectStorage
 def test_chinese_customer_wording_expands_to_retrieval_terms() -> None:
     terms = lexicalize("下单后可以马上去门店拿货吗").split()
     assert {"订单", "自提", "到店"} <= set(terms)
+
+
+def test_chunking_uses_token_overlap_and_preserves_table_rows() -> None:
+    chunks = chunk_text(
+        " ".join(f"word{index}" for index in range(120)),
+        target_tokens=40,
+        max_tokens=50,
+    )
+
+    assert len(chunks) >= 3
+    assert all(len(_tokens(chunk.content)) <= 50 for chunk in chunks)
+    assert _tokens(chunks[0].content)[-4:] == _tokens(chunks[1].content)[:4]
+
+    rows = [
+        "| Product | Return window |",
+        "| --- | --- |",
+        *[f"| Item {index} | {30 + index} days |" for index in range(12)],
+    ]
+    table_chunks = chunk_text("\n".join(rows), target_tokens=30, max_tokens=40)
+    assert all(any(row in chunk.content for chunk in table_chunks) for row in rows)
+
+    faq_chunks = chunk_text(
+        " ".join(f"context{index}" for index in range(38))
+        + "\n\nQuestion: How long is the return window?"
+        + "\n\nAnswer: The return window is 30 days.",
+        target_tokens=40,
+        max_tokens=55,
+    )
+    assert any(
+        "Question: How long is the return window?" in chunk.content
+        and "Answer: The return window is 30 days." in chunk.content
+        for chunk in faq_chunks
+    )
+
+
+def test_rrf_score_is_the_primary_fusion_order() -> None:
+    documents = [KnowledgeDocument(id=uuid4(), title=f"Document {index}") for index in range(3)]
+    chunks = [KnowledgeChunk(id=uuid4(), content=f"Chunk {index}") for index in range(3)]
+
+    results = KnowledgeRepository._fuse(
+        [(chunks[0], documents[0], 0.1), (chunks[1], documents[1], 0.2)],
+        [(chunks[1], documents[1], 0.2), (chunks[2], documents[2], 0.95)],
+        3,
+    )
+
+    assert results[0].chunk.id == chunks[1].id
 
 
 async def _create_tenant_admins(
@@ -100,6 +150,8 @@ async def _prepare_knowledge_base(client: AsyncClient, headers: dict[str, str]) 
         },
     )
     assert knowledge_base.status_code == 201, knowledge_base.text
+    assert knowledge_base.json()["keyword_score_threshold"] == 0.15
+    assert knowledge_base.json()["vector_similarity_threshold"] == 0.72
 
     bound = await client.put(
         "/v1/admin/knowledge-bases/"
@@ -144,6 +196,15 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
     headers_b = {"Authorization": f"Bearer {token_b}"}
     base_id, _ = await _prepare_knowledge_base(client, headers_a)
 
+    calibrated = await client.patch(
+        f"/v1/admin/knowledge-bases/{base_id}",
+        headers=headers_a,
+        json={"keyword_score_threshold": 0.2, "vector_similarity_threshold": 0.7},
+    )
+    assert calibrated.status_code == 200, calibrated.text
+    assert calibrated.json()["keyword_score_threshold"] == 0.2
+    assert calibrated.json()["vector_similarity_threshold"] == 0.7
+
     uploaded = await client.post(
         f"/v1/admin/knowledge-bases/{base_id}/documents",
         headers=headers_a,
@@ -173,6 +234,16 @@ async def test_document_ingestion_search_versioning_and_tenant_isolation(
             tenant_id=tenant_a.id,
             document_id=UUID(uploaded.json()["document"]["id"]),
         )
+        chunk = await session.scalar(
+            select(KnowledgeChunk).where(
+                KnowledgeChunk.tenant_id == tenant_a.id,
+                KnowledgeChunk.document_id == UUID(uploaded.json()["document"]["id"]),
+            )
+        )
+        assert chunk is not None
+        assert chunk.source_locator == "https://docs.example.com/returns"
+        assert chunk.embedding_dimension == 32
+        assert chunk.status.value == "active"
 
     detail = await client.get(
         f"/v1/admin/knowledge-bases/{base_id}/documents/{first_document_id}",
@@ -330,3 +401,84 @@ async def test_upload_rejects_unsupported_document_type(
     )
     assert unsafe_source.status_code == 422
     assert unsafe_source.json()["code"] == "source_url_invalid"
+
+
+async def test_upload_enforces_content_deduplication_and_tenant_quotas(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.api.v1.knowledge._enqueue_ingestion", lambda *_: None)
+    tenant, _ = await _create_tenant_admins(session_factory)
+    token = await _login(
+        client,
+        {
+            "email": "knowledge-admin@example.com",
+            "password": "knowledge-password",
+            "tenant_id": str(tenant.id),
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    base_id, _ = await _prepare_knowledge_base(client, headers)
+
+    first_content = b"# Returns\n\nProducts can be returned within 30 days."
+    first = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/documents",
+        headers=headers,
+        data={"title": "Returns"},
+        files={"file": ("returns.md", first_content, "text/markdown")},
+    )
+    assert first.status_code == 202, first.text
+
+    duplicate = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/documents",
+        headers=headers,
+        data={"title": "Returns duplicate"},
+        files={"file": ("returns-copy.md", first_content, "text/markdown")},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "document_content_duplicate"
+
+    monkeypatch.setattr(
+        "app.domains.knowledge.service.get_settings",
+        lambda: SimpleNamespace(
+            knowledge_document_limit_per_tenant=1,
+            knowledge_storage_limit_bytes_per_tenant=1024 * 1024,
+        ),
+    )
+    over_document_quota = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/documents",
+        headers=headers,
+        data={"title": "Shipping"},
+        files={
+            "file": (
+                "shipping.md",
+                b"# Shipping\n\nOrders ship within two business days.",
+                "text/markdown",
+            )
+        },
+    )
+    assert over_document_quota.status_code == 409
+    assert over_document_quota.json()["code"] == "knowledge_document_quota_exceeded"
+
+    monkeypatch.setattr(
+        "app.domains.knowledge.service.get_settings",
+        lambda: SimpleNamespace(
+            knowledge_document_limit_per_tenant=10,
+            knowledge_storage_limit_bytes_per_tenant=len(first_content) + 10,
+        ),
+    )
+    over_storage_quota = await client.post(
+        f"/v1/admin/knowledge-bases/{base_id}/documents",
+        headers=headers,
+        data={"title": "Warranty"},
+        files={
+            "file": (
+                "warranty.md",
+                b"# Warranty\n\nWarranty coverage lasts for one full year.",
+                "text/markdown",
+            )
+        },
+    )
+    assert over_storage_quota.status_code == 413
+    assert over_storage_quota.json()["code"] == "knowledge_storage_quota_exceeded"

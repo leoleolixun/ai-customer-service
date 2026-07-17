@@ -1221,11 +1221,25 @@
             "title": "Embedding Version",
             "type": "string"
           },
+          "keyword_score_threshold": {
+            "default": 0.15,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Keyword Score Threshold",
+            "type": "number"
+          },
           "name": {
             "maxLength": 160,
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "vector_similarity_threshold": {
+            "default": 0.72,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Vector Similarity Threshold",
+            "type": "number"
           }
         },
         "required": [
@@ -1272,6 +1286,10 @@
             "title": "Id",
             "type": "string"
           },
+          "keyword_score_threshold": {
+            "title": "Keyword Score Threshold",
+            "type": "number"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1288,6 +1306,10 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "vector_similarity_threshold": {
+            "title": "Vector Similarity Threshold",
+            "type": "number"
           }
         },
         "required": [
@@ -1300,6 +1322,8 @@
           "embedding_dimension",
           "embedding_version",
           "chunking_version",
+          "keyword_score_threshold",
+          "vector_similarity_threshold",
           "status",
           "created_at",
           "updated_at"
@@ -1329,6 +1353,19 @@
             ],
             "title": "Description"
           },
+          "keyword_score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Score Threshold"
+          },
           "name": {
             "anyOf": [
               {
@@ -1351,6 +1388,19 @@
                 "type": "null"
               }
             ]
+          },
+          "vector_similarity_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Similarity Threshold"
           }
         },
         "title": "KnowledgeBaseUpdate",
@@ -3523,6 +3573,37 @@
               "title": "Handoff Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return messages older than this ID",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return messages older than this ID",
+              "title": "Before"
+            }
           }
         ],
         "responses": {
@@ -5119,6 +5200,37 @@
               "format": "uuid",
               "title": "Conversation Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return messages older than this ID",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return messages older than this ID",
+              "title": "Before"
             }
           },
           {

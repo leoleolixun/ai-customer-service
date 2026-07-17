@@ -43,6 +43,7 @@ V1.0 使用两个中立演示租户验证隔离、知识问答、拒答和人工
 - [Worker 恢复检查](docs/worker-recovery.md)
 - [单机部署与回滚](docs/deployment.md)
 - [备份与恢复](docs/backup-restore.md)
+- [TypeScript SDK 接入指南](packages/sdk/README.md)
 
 ## 本地启动
 
@@ -78,8 +79,8 @@ npm run dev:demo
 - 管理端：`http://localhost:5173`
 - Widget 演示站：`http://localhost:5174`
 
-生产镜像会把管理端挂载到 `/console/`，并在 `/sdk/` 和 `/widget/` 提供已构建的接入产物；开发模式仍使用
-独立 Vite 服务以获得热更新。
+生产镜像会把管理端挂载到 `/console/`、演示站挂载到 `/demo/`，并在 `/sdk/` 和 `/widget/` 提供已构建的
+接入产物；开发模式仍使用独立 Vite 服务以获得热更新。
 
 创建两个隔离的中立演示租户：
 

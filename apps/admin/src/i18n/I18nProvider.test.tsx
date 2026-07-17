@@ -12,8 +12,13 @@ import {
 } from '@/i18n/I18nProvider';
 
 const LanguageProbe: React.FC = () => {
-  const { language, messages } = useI18n();
-  return <div>{language} · {messages.app.name}</div>;
+  const { labelValue, language, messages } = useI18n();
+  return (
+    <div>
+      {language} · {messages.app.name} · {labelValue('active')} ·{' '}
+      {labelValue('customer_requested_handoff')}
+    </div>
+  );
 };
 
 describe('I18nProvider', () => {
@@ -35,7 +40,7 @@ describe('I18nProvider', () => {
 
     render(<I18nProvider><LanguageProbe /></I18nProvider>);
 
-    expect(screen.getByText('zh-CN · 客服管理后台')).toBeVisible();
+    expect(screen.getByText('zh-CN · 客服管理后台 · 启用 · 客户申请人工客服')).toBeVisible();
     expect(document.documentElement.lang).toBe('zh-CN');
   });
 
@@ -44,7 +49,7 @@ describe('I18nProvider', () => {
 
     render(<I18nProvider><LanguageProbe /></I18nProvider>);
 
-    expect(screen.getByText('zh-CN · 客服管理后台')).toBeVisible();
+    expect(screen.getByText('zh-CN · 客服管理后台 · 启用 · 客户申请人工客服')).toBeVisible();
   });
 
   it('formats named message values', () => {

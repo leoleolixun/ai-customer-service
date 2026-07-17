@@ -14,12 +14,14 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 import app.models  # noqa: F401
 from app.core.errors import AppError
-from app.core.security import StaffPrincipal
+from app.core.security import CustomerPrincipal, StaffPrincipal
 from app.domains.applications.models import Application
 from app.domains.audit.models import AuditLog
-from app.domains.conversations.models import Conversation, ConversationMode, EndUser
+from app.domains.conversations.models import Conversation, ConversationMode, EndUser, Message
+from app.domains.conversations.repository import ConversationRepository
+from app.domains.conversations.service import ConversationService, PreparedChat
 from app.domains.handoffs.models import HandoffRequest, HandoffStatus
-from app.domains.handoffs.service import AgentHandoffService
+from app.domains.handoffs.service import AgentHandoffService, CustomerHandoffService
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
 from app.domains.knowledge.models import (
     DocumentStatus,
@@ -28,9 +30,11 @@ from app.domains.knowledge.models import (
     KnowledgeDocument,
 )
 from app.domains.knowledge.repository import KnowledgeRepository
+from app.domains.knowledge.service import DocumentService, KnowledgeBaseService
 from app.domains.model_gateway.models import (
     AIModelConfig,
     AIProviderAccount,
+    ApplicationModelBinding,
     ModelPurpose,
     ModelStatus,
     ProviderKind,
@@ -39,6 +43,8 @@ from app.domains.model_gateway.models import (
 )
 from app.domains.tenants.models import Tenant
 from app.infrastructure.database.base import Base
+from app.providers.storage.memory import MemoryObjectStorage
+from app.workers.knowledge import _document_lock_id
 
 pytestmark = pytest.mark.integration
 
@@ -139,12 +145,14 @@ async def _create_search_fixture(
             chunk_index=0,
             content=content,
             heading_path=["private"],
+            source_locator=document.source_url or document.source_filename,
             lexical_text=content,
             lexical_vector=content,
             content_hash=hashlib.sha256(content.encode()).hexdigest(),
             embedding=vector,
             embedding_model=model.model_name,
             embedding_version=knowledge_base.embedding_version,
+            embedding_dimension=knowledge_base.embedding_dimension,
             chunking_version="integration-v1",
         )
     )
@@ -322,3 +330,299 @@ async def test_postgres_allows_exactly_one_agent_to_accept_a_handoff(
     assert handoff.status == HandoffStatus.ACCEPTED
     assert handoff.assigned_staff_user_id == winner
     assert accept_audits == 1
+
+
+async def _create_customer_conversation_fixture(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[CustomerPrincipal, UUID]:
+    async with session_factory() as session:
+        tenant = Tenant(name="Customer lock", slug="customer-lock")
+        session.add(tenant)
+        await session.flush()
+        application = Application(
+            tenant_id=tenant.id,
+            name="customer-lock-web",
+            public_key=f"pk_{uuid4().hex}",
+            allowed_origins=["https://customer-lock.invalid"],
+        )
+        session.add(application)
+        await session.flush()
+        end_user = EndUser(
+            tenant_id=tenant.id,
+            application_id=application.id,
+            external_user_id="customer-lock-user",
+        )
+        session.add(end_user)
+        await session.flush()
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            application_id=application.id,
+            end_user_id=end_user.id,
+            mode=ConversationMode.AI,
+        )
+        session.add(conversation)
+        await session.commit()
+        return (
+            CustomerPrincipal(
+                tenant_id=tenant.id,
+                application_id=application.id,
+                external_user_id=end_user.external_user_id,
+                scopes=("chat:read", "chat:write", "handoff:create"),
+                token_id=uuid4(),
+            ),
+            conversation.id,
+        )
+
+
+async def test_postgres_serializes_ai_finalization_and_handoff_request(
+    postgres_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    principal, conversation_id = await _create_customer_conversation_fixture(
+        postgres_session_factory
+    )
+
+    async def request_handoff() -> HandoffRequest:
+        async with postgres_session_factory() as session:
+            return await CustomerHandoffService(session).request(
+                principal=principal,
+                conversation_id=conversation_id,
+                reason="customer_requested_handoff",
+                request_id="handoff-lock-contract",
+            )
+
+    async with postgres_session_factory() as ai_session:
+        state = await ConversationRepository(ai_session).get_conversation_state(
+            tenant_id=principal.tenant_id,
+            conversation_id=conversation_id,
+            for_update=True,
+        )
+        assert state is not None
+
+        handoff_task = asyncio.create_task(request_handoff())
+        await asyncio.sleep(0.1)
+        assert not handoff_task.done()
+
+        await ai_session.commit()
+        handoff = await asyncio.wait_for(handoff_task, timeout=2)
+
+    assert handoff.status == HandoffStatus.PENDING
+    async with postgres_session_factory() as session:
+        conversation = await session.scalar(
+            select(Conversation).where(
+                Conversation.tenant_id == principal.tenant_id,
+                Conversation.id == conversation_id,
+            )
+        )
+    assert conversation is not None
+    assert conversation.mode == ConversationMode.HUMAN
+
+
+async def test_postgres_serializes_duplicate_document_ingestion_locks(
+    postgres_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    lock_id = _document_lock_id(uuid4(), uuid4())
+
+    async with postgres_session_factory() as first_session:
+        await first_session.execute(text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id})
+        async with postgres_session_factory() as second_session:
+            second_acquired = await second_session.scalar(
+                text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+            )
+            assert second_acquired is False
+
+            await first_session.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+            )
+            second_acquired = await second_session.scalar(
+                text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+            )
+            assert second_acquired is True
+            await second_session.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+            )
+
+
+async def _create_chat_idempotency_fixture(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[CustomerPrincipal, UUID]:
+    async with session_factory() as session:
+        tenant = Tenant(name="Chat idempotency", slug="chat-idempotency")
+        session.add(tenant)
+        await session.flush()
+        application = Application(
+            tenant_id=tenant.id,
+            name="chat-idempotency-web",
+            public_key=f"pk_{uuid4().hex}",
+            allowed_origins=["https://chat-idempotency.invalid"],
+        )
+        provider = AIProviderAccount(
+            tenant_id=tenant.id,
+            scope=ProviderScope.TENANT,
+            name="fake-chat",
+            kind=ProviderKind.FAKE,
+            status=ProviderStatus.READY,
+        )
+        session.add_all([application, provider])
+        await session.flush()
+        model = AIModelConfig(
+            tenant_id=tenant.id,
+            provider_account_id=provider.id,
+            name="chat",
+            model_name="fake-chat-v1",
+            purpose=ModelPurpose.CHAT,
+            status=ModelStatus.ACTIVE,
+        )
+        end_user = EndUser(
+            tenant_id=tenant.id,
+            application_id=application.id,
+            external_user_id="idempotent-customer",
+        )
+        session.add_all([model, end_user])
+        await session.flush()
+        session.add(
+            ApplicationModelBinding(
+                tenant_id=tenant.id,
+                application_id=application.id,
+                model_config_id=model.id,
+                purpose=ModelPurpose.CHAT,
+            )
+        )
+        conversation = Conversation(
+            tenant_id=tenant.id,
+            application_id=application.id,
+            end_user_id=end_user.id,
+        )
+        session.add(conversation)
+        await session.commit()
+        return (
+            CustomerPrincipal(
+                tenant_id=tenant.id,
+                application_id=application.id,
+                external_user_id=end_user.external_user_id,
+                scopes=("chat:read", "chat:write"),
+                token_id=uuid4(),
+            ),
+            conversation.id,
+        )
+
+
+async def test_postgres_handles_concurrent_chat_idempotency_conflict(
+    postgres_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal, conversation_id = await _create_chat_idempotency_fixture(postgres_session_factory)
+    both_searches_started = asyncio.Event()
+    arrival_lock = asyncio.Lock()
+    arrivals = 0
+
+    async def synchronized_empty_search(
+        _service: KnowledgeBaseService, **_kwargs: object
+    ) -> list[object]:
+        nonlocal arrivals
+        async with arrival_lock:
+            arrivals += 1
+            if arrivals == 2:
+                both_searches_started.set()
+        await asyncio.wait_for(both_searches_started.wait(), timeout=2)
+        return []
+
+    monkeypatch.setattr(
+        KnowledgeBaseService,
+        "search_for_application",
+        synchronized_empty_search,
+    )
+
+    async def prepare() -> tuple[str, PreparedChat | None]:
+        async with postgres_session_factory() as session:
+            try:
+                prepared = await ConversationService(session).prepare_chat(
+                    principal=principal,
+                    conversation_id=conversation_id,
+                    content="What is the return policy?",
+                    idempotency_key="same-concurrent-request",
+                )
+                return "accepted", prepared
+            except AppError as exc:
+                await session.rollback()
+                return exc.code, None
+
+    outcomes = await asyncio.gather(prepare(), prepare())
+
+    assert sorted(status for status, _prepared in outcomes) == [
+        "accepted",
+        "idempotent_message_incomplete",
+    ]
+    async with postgres_session_factory() as session:
+        message_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(
+                    Message.tenant_id == principal.tenant_id,
+                    Message.conversation_id == conversation_id,
+                )
+            )
+            or 0
+        )
+    assert message_count == 2
+
+
+async def test_postgres_serializes_concurrent_duplicate_document_uploads(
+    postgres_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with postgres_session_factory() as session:
+        tenant, knowledge_base = await _create_search_fixture(
+            session,
+            slug="upload-deduplication",
+            content="existing content",
+            vector=[1.0, 0.0, 0.0],
+        )
+        await session.commit()
+
+    actor = StaffPrincipal(
+        user_id=uuid4(),
+        email="upload-deduplication@example.com",
+        is_platform_admin=False,
+        tenant_id=tenant.id,
+        role=TenantRole.TENANT_ADMIN,
+    )
+    storage = MemoryObjectStorage()
+    upload_content = b"# Returns\n\nConcurrent uploads must create one document."
+
+    async def upload() -> str:
+        async with postgres_session_factory() as session:
+            try:
+                await DocumentService(session, storage).upload(
+                    tenant_id=tenant.id,
+                    base_id=knowledge_base.id,
+                    title="Concurrent upload",
+                    filename="concurrent.md",
+                    mime_type="text/markdown",
+                    content=upload_content,
+                    source_url=None,
+                    replace_document_id=None,
+                    actor=actor,
+                    request_id="concurrent-upload",
+                )
+                return "accepted"
+            except AppError as exc:
+                await session.rollback()
+                return exc.code
+
+    outcomes = await asyncio.gather(upload(), upload())
+
+    assert sorted(outcomes) == ["accepted", "document_content_duplicate"]
+    content_hash = hashlib.sha256(upload_content).hexdigest()
+    async with postgres_session_factory() as session:
+        document_count = int(
+            await session.scalar(
+                select(func.count(KnowledgeDocument.id)).where(
+                    KnowledgeDocument.tenant_id == tenant.id,
+                    KnowledgeDocument.knowledge_base_id == knowledge_base.id,
+                    KnowledgeDocument.content_hash == content_hash,
+                )
+            )
+            or 0
+        )
+    assert document_count == 1
+    assert len(storage.objects) == 1

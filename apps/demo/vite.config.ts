@@ -1,7 +1,8 @@
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  base: mode === 'production' ? '/demo/' : '/',
   resolve: {
     alias: {
       '@ai-support/sdk': fileURLToPath(new URL('../../packages/sdk/src/index.ts', import.meta.url)),
@@ -11,5 +12,5 @@ export default defineConfig({
     },
   },
   server: { port: 5174 },
-  build: { sourcemap: true },
-});
+  build: { sourcemap: false },
+}));

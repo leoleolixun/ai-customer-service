@@ -76,7 +76,17 @@ def extract_text(content: bytes, mime_type: str) -> str:
     )
 
 
-def chunk_text(text: str, *, target_tokens: int = 450, max_tokens: int = 600) -> list[ChunkDraft]:
+def chunk_text(
+    text: str,
+    *,
+    target_tokens: int = 450,
+    max_tokens: int = 600,
+    overlap_ratio: float = 0.1,
+) -> list[ChunkDraft]:
+    if target_tokens < 1 or max_tokens < target_tokens:
+        raise ValueError("chunk token limits must satisfy 1 <= target_tokens <= max_tokens")
+    if not 0 <= overlap_ratio < 1:
+        raise ValueError("overlap_ratio must be between 0 (inclusive) and 1 (exclusive)")
     normalized = _normalize(text)
     if not normalized:
         raise AppError(
@@ -85,33 +95,38 @@ def chunk_text(text: str, *, target_tokens: int = 450, max_tokens: int = 600) ->
             title="Document is empty",
             detail="The document does not contain usable text.",
         )
-    blocks = _structural_blocks(normalized)
+    overlap_tokens = max(1, round(target_tokens * overlap_ratio)) if overlap_ratio else 0
+    blocks = [
+        (part, headings)
+        for block, headings in _merge_faq_blocks(_structural_blocks(normalized))
+        for part in _split_long_block(block, max_tokens, overlap_tokens)
+    ]
     chunks: list[ChunkDraft] = []
     current: list[str] = []
-    heading_path: list[str] = []
     current_heading: list[str] = []
     token_count = 0
 
     for block, headings in blocks:
-        block_tokens = _tokens(block)
-        if len(block_tokens) > max_tokens:
-            if current:
-                chunks.append(_draft("\n\n".join(current), current_heading))
+        block_token_count = len(_tokens(block))
+        if current and token_count + block_token_count > target_tokens:
+            emitted = "\n\n".join(current)
+            chunks.append(_draft(emitted, current_heading))
+            overlap = _tail_by_tokens(emitted, overlap_tokens)
+            if (
+                headings == current_heading
+                and overlap
+                and len(_tokens(overlap)) + block_token_count <= max_tokens
+            ):
+                current = [overlap]
+                token_count = len(_tokens(overlap))
+            else:
                 current = []
                 token_count = 0
-            for part in _split_long_block(block, max_tokens):
-                chunks.append(_draft(part, headings))
-            continue
-        if current and token_count + len(block_tokens) > target_tokens:
-            chunks.append(_draft("\n\n".join(current), current_heading))
-            overlap = current[-1:] if current else []
-            current = overlap
-            token_count = sum(len(_tokens(item)) for item in overlap)
-        if headings:
-            heading_path = headings
-        current_heading = list(heading_path)
+            current_heading = list(headings)
+        if not current:
+            current_heading = list(headings)
         current.append(block)
-        token_count += len(block_tokens)
+        token_count += block_token_count
 
     if current:
         chunks.append(_draft("\n\n".join(current), current_heading))
@@ -149,13 +164,100 @@ def _structural_blocks(text: str) -> list[tuple[str, list[str]]]:
     return blocks
 
 
-def _split_long_block(block: str, max_tokens: int) -> list[str]:
-    approximate_chars = max_tokens * 2
-    return [
-        block[index : index + approximate_chars].strip()
-        for index in range(0, len(block), approximate_chars)
-        if block[index : index + approximate_chars].strip()
+def _merge_faq_blocks(
+    blocks: list[tuple[str, list[str]]],
+) -> list[tuple[str, list[str]]]:
+    merged: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < len(blocks):
+        block, headings = blocks[index]
+        if index + 1 < len(blocks) and _is_question_block(block):
+            answer, _answer_headings = blocks[index + 1]
+            if _is_answer_block(answer):
+                merged.append((f"{block}\n\n{answer}", headings))
+                index += 2
+                continue
+        merged.append((block, headings))
+        index += 1
+    return merged
+
+
+def _is_question_block(block: str) -> bool:
+    first_line = re.sub(r"^#{1,6}\s+", "", block.splitlines()[0]).strip().casefold()
+    return bool(re.match(r"^(?:q(?:uestion)?|问题|问)\s*[:：]", first_line))  # noqa: RUF001
+
+
+def _is_answer_block(block: str) -> bool:
+    first_line = re.sub(r"^#{1,6}\s+", "", block.splitlines()[0]).strip().casefold()
+    return bool(re.match(r"^(?:a(?:nswer)?|答案|答)\s*[:：]", first_line))  # noqa: RUF001
+
+
+def _split_long_block(block: str, max_tokens: int, overlap_tokens: int) -> list[str]:
+    if len(_tokens(block)) <= max_tokens:
+        return [block]
+
+    separator, segments = _logical_segments(block)
+    expanded = [
+        part for segment in segments for part in _token_windows(segment, max_tokens, overlap_tokens)
     ]
+    parts: list[str] = []
+    current: list[str] = []
+    token_count = 0
+    for segment in expanded:
+        segment_tokens = len(_tokens(segment))
+        if current and token_count + segment_tokens > max_tokens:
+            emitted = separator.join(current).strip()
+            parts.append(emitted)
+            overlap = _tail_by_tokens(emitted, overlap_tokens)
+            if overlap and len(_tokens(overlap)) + segment_tokens <= max_tokens:
+                current = [overlap]
+                token_count = len(_tokens(overlap))
+            else:
+                current = []
+                token_count = 0
+        current.append(segment)
+        token_count += segment_tokens
+    if current:
+        parts.append(separator.join(current).strip())
+    return parts
+
+
+def _logical_segments(block: str) -> tuple[str, list[str]]:
+    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    if len(lines) > 1:
+        return "\n", lines
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[。！？!?；;\.])\s*", block)  # noqa: RUF001
+        if sentence.strip()
+    ]
+    return " ", sentences or [block]
+
+
+def _token_windows(text: str, max_tokens: int, overlap_tokens: int) -> list[str]:
+    spans = [item for item in jieba.tokenize(text) if item[0].strip()]
+    if len(spans) <= max_tokens:
+        return [text.strip()]
+    step = max(1, max_tokens - min(overlap_tokens, max_tokens - 1))
+    windows: list[str] = []
+    for start in range(0, len(spans), step):
+        selected = spans[start : start + max_tokens]
+        if not selected:
+            break
+        windows.append(text[selected[0][1] : selected[-1][2]].strip())
+        if start + max_tokens >= len(spans):
+            break
+    return windows
+
+
+def _tail_by_tokens(text: str, token_count: int) -> str:
+    if token_count <= 0:
+        return ""
+    spans = [item for item in jieba.tokenize(text) if item[0].strip()]
+    if not spans:
+        return ""
+    start = spans[max(0, len(spans) - token_count)][1]
+    return text[start:].strip()
 
 
 def _tokens(text: str) -> list[str]:

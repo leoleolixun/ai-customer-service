@@ -36,7 +36,7 @@ class CustomerHandoffService:
         request_id: str | None,
     ) -> HandoffRequest:
         self._require_scope(principal, "handoff:create")
-        conversation = await self._owned_conversation(principal, conversation_id)
+        conversation = await self._owned_conversation(principal, conversation_id, for_update=True)
         if conversation.status != ConversationStatus.OPEN:
             self._raise_closed()
         existing = await self.handoffs.get_active(
@@ -90,7 +90,7 @@ class CustomerHandoffService:
         idempotency_key: str | None,
     ) -> MessageResponse:
         self._require_scope(principal, "chat:write")
-        conversation = await self._owned_conversation(principal, conversation_id)
+        conversation = await self._owned_conversation(principal, conversation_id, for_update=True)
         if conversation.status != ConversationStatus.OPEN:
             self._raise_closed()
         if conversation.mode != ConversationMode.HUMAN:
@@ -132,13 +132,18 @@ class CustomerHandoffService:
             return MessageResponse.model_validate(existing)
 
     async def _owned_conversation(
-        self, principal: CustomerPrincipal, conversation_id: UUID
+        self,
+        principal: CustomerPrincipal,
+        conversation_id: UUID,
+        *,
+        for_update: bool = False,
     ) -> Conversation:
         conversation = await self.handoffs.get_owned_conversation(
             tenant_id=principal.tenant_id,
             application_id=principal.application_id,
             external_user_id=principal.external_user_id,
             conversation_id=conversation_id,
+            for_update=for_update,
         )
         if conversation is None:
             raise AppError(
@@ -256,7 +261,7 @@ class AgentHandoffService:
     ) -> MessageResponse:
         tenant_id = self._tenant_id(actor)
         handoff = await self._assigned_handoff(tenant_id, actor.user_id, handoff_id)
-        conversation = await self._conversation(tenant_id, handoff.conversation_id)
+        conversation = await self._conversation(tenant_id, handoff.conversation_id, for_update=True)
         if conversation.status != ConversationStatus.OPEN:
             CustomerHandoffService._raise_closed()
         message = await self.handoffs.create_message(
@@ -271,12 +276,34 @@ class AgentHandoffService:
         return MessageResponse.model_validate(message)
 
     async def list_messages(
-        self, *, actor: StaffPrincipal, handoff_id: UUID
+        self,
+        *,
+        actor: StaffPrincipal,
+        handoff_id: UUID,
+        limit: int = 100,
+        before_id: UUID | None = None,
     ) -> list[MessageResponse]:
         tenant_id = self._tenant_id(actor)
         handoff = await self._get_handoff(tenant_id, handoff_id)
+        before = None
+        if before_id is not None:
+            before = await self.conversations.get_message_cursor(
+                tenant_id=tenant_id,
+                conversation_id=handoff.conversation_id,
+                message_id=before_id,
+            )
+            if before is None:
+                raise AppError(
+                    status_code=400,
+                    code="message_cursor_invalid",
+                    title="Invalid message cursor",
+                    detail="The before cursor does not belong to this handoff conversation.",
+                )
         messages = await self.conversations.list_messages(
-            tenant_id=tenant_id, conversation_id=handoff.conversation_id
+            tenant_id=tenant_id,
+            conversation_id=handoff.conversation_id,
+            limit=limit,
+            before=before,
         )
         return [MessageResponse.model_validate(message) for message in messages]
 
@@ -290,7 +317,9 @@ class AgentHandoffService:
     ) -> HandoffRequest:
         tenant_id = self._tenant_id(actor)
         handoff = await self._assigned_handoff(tenant_id, actor.user_id, handoff_id)
-        conversation = await self._conversation(tenant_id, handoff.conversation_id)
+        conversation = await self._conversation(tenant_id, handoff.conversation_id, for_update=True)
+        if conversation.status != ConversationStatus.OPEN:
+            CustomerHandoffService._raise_closed()
         await self.handoffs.close(
             handoff=handoff,
             conversation=conversation,
@@ -324,9 +353,13 @@ class AgentHandoffService:
             self._raise_handoff_not_found()
         return handoff
 
-    async def _conversation(self, tenant_id: UUID, conversation_id: UUID) -> Conversation:
+    async def _conversation(
+        self, tenant_id: UUID, conversation_id: UUID, *, for_update: bool = False
+    ) -> Conversation:
         conversation = await self.handoffs.get_conversation(
-            tenant_id=tenant_id, conversation_id=conversation_id
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            for_update=for_update,
         )
         if conversation is None:
             raise AppError(

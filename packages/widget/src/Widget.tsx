@@ -227,7 +227,9 @@ const Widget: React.FC<WidgetProps> = ({
               current.map((item) => (item.id === assistantId ? event.data : item)),
             );
           }
-          if (event.type === 'message.error') throw new Error(event.data.message);
+          if (event.type === 'message.error') {
+            throw new SupportApiError(502, event.data.code, event.data.message);
+          }
         }
       }
     } catch (cause) {
@@ -462,7 +464,25 @@ function handoffLabel(handoff: Handoff | null, translations: WidgetTranslations)
 }
 
 function messageFromError(cause: unknown, translations: WidgetTranslations): string {
-  if (cause instanceof SupportApiError) return cause.message;
+  if (cause instanceof SupportApiError) {
+    const messagesByCode: Record<string, keyof WidgetTranslations> = {
+      ai_reply_cancelled: 'conversationStateChangedError',
+      authentication_required: 'authenticationError',
+      chat_model_unavailable: 'modelUnavailableError',
+      conversation_closed: 'conversationClosedError',
+      conversation_in_human_mode: 'conversationStateChangedError',
+      conversation_not_found: 'conversationUnavailableError',
+      handoff_not_active: 'conversationStateChangedError',
+      handoff_not_found: 'conversationStateChangedError',
+      idempotent_message_incomplete: 'requestInProgressError',
+      insufficient_scope: 'authenticationError',
+      invalid_token: 'authenticationError',
+      model_provider_failed: 'modelUnavailableError',
+      rate_limit_exceeded: 'rateLimitedError',
+      rate_limiter_unavailable: 'fallbackError',
+    };
+    return translations[messagesByCode[cause.code] ?? 'fallbackError'];
+  }
   return translations.fallbackError;
 }
 

@@ -40,6 +40,11 @@ class IngestionStatus(StrEnum):
     FAILED = "failed"
 
 
+class ChunkStatus(StrEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
 class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_bases"
     __table_args__ = (
@@ -59,6 +64,8 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
     chunking_version: Mapped[str] = mapped_column(String(64), default="v1", nullable=False)
+    keyword_score_threshold: Mapped[float] = mapped_column(Float, default=0.15, nullable=False)
+    vector_similarity_threshold: Mapped[float] = mapped_column(Float, default=0.72, nullable=False)
     status: Mapped[KnowledgeBaseStatus] = mapped_column(
         Enum(
             KnowledgeBaseStatus,
@@ -185,6 +192,7 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     heading_path: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    source_locator: Mapped[str] = mapped_column(String(1000), nullable=False)
     lexical_text: Mapped[str] = mapped_column(Text, nullable=False)
     lexical_vector: Mapped[str] = mapped_column(
         TSVECTOR().with_variant(Text(), "sqlite"), nullable=False
@@ -195,7 +203,19 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
     embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     chunking_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[ChunkStatus] = mapped_column(
+        Enum(
+            ChunkStatus,
+            name="knowledge_chunk_status",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        default=ChunkStatus.ACTIVE,
+        nullable=False,
+    )
 
 
 class Citation(UUIDPrimaryKeyMixin, TimestampMixin, Base):

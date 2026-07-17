@@ -51,12 +51,21 @@ jobs:
       - run: uv run mypy app scripts examples tests
       - run: uv run alembic upgrade head
       - run: uv run alembic check
-      - run: uv run pytest
+      - run: uv run pytest --junitxml=reports/pytest.xml
       - run: uv run python scripts/check_secrets.py
       - run: APP_ENV_FILE=.env.example docker compose --env-file .env.example -f docker-compose.yml config --quiet
       - run: docker compose --env-file .env.production.example -f deploy/compose.production.yml config --quiet
       - run: uv run python scripts/export_openapi.py
       - run: git diff --exit-code -- openapi/openapi.json
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-quality-report
+          path: |
+            reports/pytest.xml
+            openapi/openapi.json
+          if-no-files-found: error
+          retention-days: 14
 
   frontend-quality:
     runs-on: ubuntu-latest
@@ -70,6 +79,17 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:frontend
       - run: npm run build
+      - run: python scripts/check_secrets.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web-assets
+          path: |
+            apps/admin/dist/
+            apps/demo/dist/
+            packages/sdk/dist/
+            packages/widget/dist/
+          if-no-files-found: error
+          retention-days: 14
 
   frontend-e2e:
     runs-on: ubuntu-latest

@@ -94,7 +94,9 @@ describe('Widget', () => {
 
     await user.click(screen.getByRole('button', { name: 'Open support' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Gateway unavailable');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Support is temporarily unavailable. Please try again later.',
+    );
     await user.click(screen.getByRole('button', { name: 'Close support' }));
     expect(screen.getByRole('button', { name: 'Open support' })).toBeVisible();
   });
@@ -121,6 +123,32 @@ describe('Widget', () => {
     expect(screen.getByRole('button', { name: '联系人工客服' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '关闭客服' })).toBeEnabled();
     expect(await screen.findByRole('alert')).toHaveTextContent('客服暂时不可用，请稍后重试。');
+  });
+
+  it('maps backend error codes to Simplified Chinese instead of leaking English details', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(json({
+        code: 'chat_model_unavailable',
+        detail: 'The application does not have an active model.',
+      }, 503))),
+    );
+    const user = userEvent.setup();
+    render(
+      <Widget
+        applicationId="application-1"
+        baseUrl="https://support.example.test"
+        getToken={() => 'customer-token'}
+        language="zh-CN"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '打开客服' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'AI 客服暂时不可用，请联系人工客服或稍后重试。',
+    );
+    expect(screen.getByRole('alert')).not.toHaveTextContent('active model');
   });
 
   it('persists a user language choice and uses it when the host does not specify one', async () => {

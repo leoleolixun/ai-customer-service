@@ -119,8 +119,15 @@ async def list_handoff_messages(
     handoff_id: UUID,
     actor: AgentDependency,
     session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    before: Annotated[UUID | None, Query(description="Return messages older than this ID")] = None,
 ) -> list[MessageResponse]:
-    return await AgentHandoffService(session).list_messages(actor=actor, handoff_id=handoff_id)
+    return await AgentHandoffService(session).list_messages(
+        actor=actor,
+        handoff_id=handoff_id,
+        limit=limit,
+        before_id=before,
+    )
 
 
 @admin_router.post(

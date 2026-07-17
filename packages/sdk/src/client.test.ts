@@ -42,3 +42,22 @@ describe('SupportClient locale', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ content: 'Hello', locale: 'en' });
   });
 });
+
+describe('SupportClient message history', () => {
+  it('serializes limit and before pagination options', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response('[]', {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    const client = new SupportClient({
+      baseUrl: 'https://support.example.test',
+      getToken: () => 'customer-token',
+      fetch: request,
+    });
+
+    await client.listMessages('conversation/1', { limit: 25, before: 'message-25' });
+
+    expect(request.mock.calls[0]?.[0]).toBe(
+      'https://support.example.test/v1/chat/sessions/conversation%2F1/messages?limit=25&before=message-25',
+    );
+  });
+});

@@ -27,6 +27,7 @@ class HandoffRepository:
         application_id: UUID,
         external_user_id: str,
         conversation_id: UUID,
+        for_update: bool = False,
     ) -> Conversation | None:
         statement = (
             select(Conversation)
@@ -40,15 +41,19 @@ class HandoffRepository:
                 EndUser.external_user_id == external_user_id,
             )
         )
+        if for_update:
+            statement = statement.with_for_update(of=Conversation)
         return cast(Conversation | None, await self.session.scalar(statement))
 
     async def get_conversation(
-        self, *, tenant_id: UUID, conversation_id: UUID
+        self, *, tenant_id: UUID, conversation_id: UUID, for_update: bool = False
     ) -> Conversation | None:
         statement = select(Conversation).where(
             Conversation.id == conversation_id,
             Conversation.tenant_id == tenant_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
         return cast(Conversation | None, await self.session.scalar(statement))
 
     async def get_active(self, *, tenant_id: UUID, conversation_id: UUID) -> HandoffRequest | None:

@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from app.core.errors import AppError
-from app.core.network import validate_external_http_url
+from app.core.network import PinnedHTTPURL, resolve_external_http_url
 from app.providers.llm.base import ChatChunk, ChatMessage
 
 
@@ -24,16 +24,19 @@ class OpenAICompatibleProvider:
         self.transport = transport
 
     async def test_connection(self) -> None:
-        await validate_external_http_url(self.base_url)
+        target = await resolve_external_http_url(self.base_url)
         try:
             async with httpx.AsyncClient(
                 timeout=10.0,
                 follow_redirects=False,
                 transport=self.transport,
+                trust_env=False,
             ) as client:
-                response = await client.get(
-                    f"{self.base_url}/models",
-                    headers=self._headers,
+                response = await client.request(
+                    "GET",
+                    f"{target.connect_url}/models",
+                    headers=self._request_headers(target),
+                    extensions=target.extensions,
                 )
         except UnicodeEncodeError as exc:
             raise AppError(
@@ -108,7 +111,7 @@ class OpenAICompatibleProvider:
         temperature: float,
         max_tokens: int,
     ) -> AsyncIterator[ChatChunk]:
-        await validate_external_http_url(self.base_url)
+        target = await resolve_external_http_url(self.base_url)
         payload = {
             "model": model,
             "messages": [
@@ -124,12 +127,14 @@ class OpenAICompatibleProvider:
                 timeout=self.timeout_seconds,
                 follow_redirects=False,
                 transport=self.transport,
+                trust_env=False,
             ) as client:
                 async with client.stream(
                     "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers,
+                    f"{target.connect_url}/chat/completions",
+                    headers=self._request_headers(target),
                     json=payload,
+                    extensions=target.extensions,
                 ) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -156,7 +161,7 @@ class OpenAICompatibleProvider:
         model: str,
         dimensions: int,
     ) -> list[list[float]]:
-        await validate_external_http_url(self.base_url)
+        target = await resolve_external_http_url(self.base_url)
         payload: dict[str, Any] = {"model": model, "input": list(texts)}
         if dimensions > 0:
             payload["dimensions"] = dimensions
@@ -165,11 +170,14 @@ class OpenAICompatibleProvider:
                 timeout=self.timeout_seconds,
                 follow_redirects=False,
                 transport=self.transport,
+                trust_env=False,
             ) as client:
-                response = await client.post(
-                    f"{self.base_url}/embeddings",
-                    headers=self._headers,
+                response = await client.request(
+                    "POST",
+                    f"{target.connect_url}/embeddings",
+                    headers=self._request_headers(target),
                     json=payload,
+                    extensions=target.extensions,
                 )
                 response.raise_for_status()
             body = response.json()
@@ -186,6 +194,9 @@ class OpenAICompatibleProvider:
     @property
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    def _request_headers(self, target: PinnedHTTPURL) -> dict[str, str]:
+        return {**self._headers, "Host": target.host_header}
 
     @staticmethod
     def _parse_chunk(data: dict[str, Any]) -> ChatChunk | None:

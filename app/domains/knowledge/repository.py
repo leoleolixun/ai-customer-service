@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.applications.models import Application
 from app.domains.conversations.models import Message
 from app.domains.knowledge.models import (
+    ChunkStatus,
     Citation,
     DocumentStatus,
     IngestionJob,
@@ -21,6 +22,7 @@ from app.domains.knowledge.models import (
 )
 from app.domains.knowledge.parsing import ChunkDraft
 from app.domains.model_gateway.models import AIModelConfig, AIProviderAccount, ProviderStatus
+from app.domains.tenants.models import Tenant
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,8 @@ class RetrievedChunk:
     score: float
     vector_similarity: float
     keyword_score: float
+    keyword_score_threshold: float = 0.15
+    vector_similarity_threshold: float = 0.72
 
 
 class KnowledgeRepository:
@@ -44,6 +48,8 @@ class KnowledgeRepository:
         description: str,
         model_config: AIModelConfig,
         embedding_version: str,
+        keyword_score_threshold: float,
+        vector_similarity_threshold: float,
     ) -> KnowledgeBase:
         assert model_config.embedding_dimension is not None
         knowledge_base = KnowledgeBase(
@@ -54,6 +60,8 @@ class KnowledgeRepository:
             embedding_model_name=model_config.model_name,
             embedding_dimension=model_config.embedding_dimension,
             embedding_version=embedding_version,
+            keyword_score_threshold=keyword_score_threshold,
+            vector_similarity_threshold=vector_similarity_threshold,
         )
         self.session.add(knowledge_base)
         await self.session.flush()
@@ -176,6 +184,39 @@ class KnowledgeRepository:
         self.session.add(job)
         await self.session.flush()
         return document, job
+
+    async def lock_tenant(self, tenant_id: UUID) -> bool:
+        statement = select(Tenant.id).where(Tenant.id == tenant_id).with_for_update()
+        return await self.session.scalar(statement) is not None
+
+    async def tenant_document_usage(self, tenant_id: UUID) -> tuple[int, int]:
+        statement = select(
+            func.count(KnowledgeDocument.id),
+            func.coalesce(func.sum(KnowledgeDocument.byte_size), 0),
+        ).where(
+            KnowledgeDocument.tenant_id == tenant_id,
+            KnowledgeDocument.status != DocumentStatus.DELETED,
+        )
+        row = (await self.session.execute(statement)).one()
+        return int(row[0]), int(row[1])
+
+    async def find_duplicate_content(
+        self, *, tenant_id: UUID, base_id: UUID, content_hash: str
+    ) -> KnowledgeDocument | None:
+        statement = select(KnowledgeDocument).where(
+            KnowledgeDocument.tenant_id == tenant_id,
+            KnowledgeDocument.knowledge_base_id == base_id,
+            KnowledgeDocument.content_hash == content_hash,
+            KnowledgeDocument.status.in_(
+                [
+                    DocumentStatus.UPLOADED,
+                    DocumentStatus.PROCESSING,
+                    DocumentStatus.READY,
+                    DocumentStatus.FAILED,
+                ]
+            ),
+        )
+        return cast(KnowledgeDocument | None, await self.session.scalar(statement))
 
     async def list_documents(self, *, tenant_id: UUID, base_id: UUID) -> list[KnowledgeDocument]:
         statement = (
@@ -306,13 +347,16 @@ class KnowledgeRepository:
                 chunk_index=index,
                 content=draft.content,
                 heading_path=draft.heading_path,
+                source_locator=document.source_url or document.source_filename,
                 lexical_text=draft.lexical_text,
                 lexical_vector=draft.lexical_text,
                 content_hash=draft.content_hash,
                 embedding=embeddings[index],
                 embedding_model=knowledge_base.embedding_model_name,
                 embedding_version=knowledge_base.embedding_version,
+                embedding_dimension=knowledge_base.embedding_dimension,
                 chunking_version=knowledge_base.chunking_version,
+                status=ChunkStatus.ACTIVE,
             )
             for index, draft in enumerate(drafts)
         ]
@@ -361,6 +405,8 @@ class KnowledgeRepository:
         query_vector: list[float],
         lexical_query: str,
         limit: int,
+        keyword_score_threshold: float = 0.15,
+        vector_similarity_threshold: float = 0.72,
     ) -> list[RetrievedChunk]:
         if self.session.bind is not None and self.session.bind.dialect.name == "postgresql":
             return await self._search_postgresql(
@@ -369,6 +415,8 @@ class KnowledgeRepository:
                 query_vector=query_vector,
                 lexical_query=lexical_query,
                 limit=limit,
+                keyword_score_threshold=keyword_score_threshold,
+                vector_similarity_threshold=vector_similarity_threshold,
             )
         return await self._search_portable(
             tenant_id=tenant_id,
@@ -376,6 +424,8 @@ class KnowledgeRepository:
             query_vector=query_vector,
             lexical_query=lexical_query,
             limit=limit,
+            keyword_score_threshold=keyword_score_threshold,
+            vector_similarity_threshold=vector_similarity_threshold,
         )
 
     async def _search_postgresql(
@@ -386,10 +436,13 @@ class KnowledgeRepository:
         query_vector: list[float],
         lexical_query: str,
         limit: int,
+        keyword_score_threshold: float,
+        vector_similarity_threshold: float,
     ) -> list[RetrievedChunk]:
         filters = (
             KnowledgeChunk.tenant_id == tenant_id,
             KnowledgeChunk.knowledge_base_id == base_id,
+            KnowledgeChunk.status == ChunkStatus.ACTIVE,
             KnowledgeDocument.tenant_id == tenant_id,
             KnowledgeDocument.status == DocumentStatus.READY,
         )
@@ -419,7 +472,13 @@ class KnowledgeRepository:
         keyword_rows = (
             list((await self.session.execute(keyword_statement)).tuples()) if lexical_tokens else []
         )
-        return self._fuse(vector_rows, keyword_rows, limit)
+        return self._fuse(
+            vector_rows,
+            keyword_rows,
+            limit,
+            keyword_score_threshold=keyword_score_threshold,
+            vector_similarity_threshold=vector_similarity_threshold,
+        )
 
     async def _search_portable(
         self,
@@ -429,6 +488,8 @@ class KnowledgeRepository:
         query_vector: list[float],
         lexical_query: str,
         limit: int,
+        keyword_score_threshold: float,
+        vector_similarity_threshold: float,
     ) -> list[RetrievedChunk]:
         statement = (
             select(KnowledgeChunk, KnowledgeDocument)
@@ -436,6 +497,7 @@ class KnowledgeRepository:
             .where(
                 KnowledgeChunk.tenant_id == tenant_id,
                 KnowledgeChunk.knowledge_base_id == base_id,
+                KnowledgeChunk.status == ChunkStatus.ACTIVE,
                 KnowledgeDocument.tenant_id == tenant_id,
                 KnowledgeDocument.status == DocumentStatus.READY,
             )
@@ -453,13 +515,22 @@ class KnowledgeRepository:
                 keyword_rows.append((chunk, document, overlap))
         vector_rows.sort(key=lambda row: row[2])
         keyword_rows.sort(key=lambda row: row[2], reverse=True)
-        return self._fuse(vector_rows[:20], keyword_rows[:20], limit)
+        return self._fuse(
+            vector_rows[:20],
+            keyword_rows[:20],
+            limit,
+            keyword_score_threshold=keyword_score_threshold,
+            vector_similarity_threshold=vector_similarity_threshold,
+        )
 
     @staticmethod
     def _fuse(
         vector_rows: list[tuple[KnowledgeChunk, KnowledgeDocument, Any]],
         keyword_rows: list[tuple[KnowledgeChunk, KnowledgeDocument, Any]],
         limit: int,
+        *,
+        keyword_score_threshold: float = 0.15,
+        vector_similarity_threshold: float = 0.72,
     ) -> list[RetrievedChunk]:
         values: dict[UUID, dict[str, Any]] = {}
         for rank, (chunk, document, distance) in enumerate(vector_rows, start=1):
@@ -469,6 +540,8 @@ class KnowledgeRepository:
                 "score": 1.0 / (60 + rank),
                 "vector_similarity": max(0.0, 1.0 - float(distance)),
                 "keyword_score": 0.0,
+                "keyword_score_threshold": keyword_score_threshold,
+                "vector_similarity_threshold": vector_similarity_threshold,
             }
         for rank, (chunk, document, keyword_score) in enumerate(keyword_rows, start=1):
             value = values.setdefault(
@@ -479,6 +552,8 @@ class KnowledgeRepository:
                     "score": 0.0,
                     "vector_similarity": 0.0,
                     "keyword_score": 0.0,
+                    "keyword_score_threshold": keyword_score_threshold,
+                    "vector_similarity_threshold": vector_similarity_threshold,
                 },
             )
             value["score"] += 1.0 / (60 + rank)
@@ -486,9 +561,8 @@ class KnowledgeRepository:
         ordered = sorted(
             values.values(),
             key=lambda item: (
-                item["keyword_score"] > 0,
-                item["keyword_score"],
                 item["score"],
+                item["keyword_score"],
                 item["vector_similarity"],
             ),
             reverse=True,

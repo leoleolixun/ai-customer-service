@@ -2,7 +2,7 @@ from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Query, status
 from fastapi.responses import Response, StreamingResponse
 
 from app.api.dependencies import CurrentCustomerDependency, SessionDependency, StorageDependency
@@ -55,8 +55,15 @@ async def list_messages(
     conversation_id: UUID,
     principal: CurrentCustomerDependency,
     session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    before: Annotated[UUID | None, Query(description="Return messages older than this ID")] = None,
 ) -> list[MessageResponse]:
-    messages = await ConversationService(session).list_messages(principal, conversation_id)
+    messages = await ConversationService(session).list_messages(
+        principal,
+        conversation_id,
+        limit=limit,
+        before_id=before,
+    )
     return messages
 
 

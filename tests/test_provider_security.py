@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.core.errors import AppError
-from app.core.network import validate_external_http_url
+from app.core.network import PinnedHTTPURL, resolve_external_http_url, validate_external_http_url
 from app.providers.llm.openai_compatible import OpenAICompatibleProvider
 
 
@@ -14,6 +14,16 @@ def disable_private_provider_urls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.core.network.get_settings",
         lambda: SimpleNamespace(allow_private_provider_urls=False),
+    )
+
+
+async def accept_provider_url(url: str) -> PinnedHTTPURL:
+    normalized = url.rstrip("/")
+    return PinnedHTTPURL(
+        normalized_url=normalized,
+        connect_url=normalized,
+        host_header="provider.example.com",
+        sni_hostname="provider.example.com",
     )
 
 
@@ -92,6 +102,25 @@ async def test_provider_url_accepts_only_public_dns_answers(
 
 
 @pytest.mark.asyncio
+async def test_provider_url_pins_the_validated_ip_for_the_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))
+        ],
+    )
+
+    target = await resolve_external_http_url("https://provider.example.com/v1")
+
+    assert target.connect_url == "https://93.184.216.34/v1"
+    assert target.host_header == "provider.example.com"
+    assert target.extensions == {"sni_hostname": "provider.example.com"}
+
+
+@pytest.mark.asyncio
 async def test_provider_url_reports_unresolvable_host(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_dns_error(*_args: object, **_kwargs: object) -> None:
         raise socket.gaierror
@@ -121,11 +150,8 @@ async def test_provider_connection_reports_actionable_upstream_errors(
     upstream_status: int,
     expected_code: str,
 ) -> None:
-    async def accept_provider_url(url: str) -> str:
-        return url
-
     monkeypatch.setattr(
-        "app.providers.llm.openai_compatible.validate_external_http_url",
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
         accept_provider_url,
     )
     transport = httpx.MockTransport(
@@ -149,11 +175,8 @@ async def test_provider_connection_reports_actionable_upstream_errors(
 async def test_provider_connection_accepts_models_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def accept_provider_url(url: str) -> str:
-        return url
-
     monkeypatch.setattr(
-        "app.providers.llm.openai_compatible.validate_external_http_url",
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
         accept_provider_url,
     )
     requested_paths: list[str] = []
@@ -177,11 +200,8 @@ async def test_provider_connection_accepts_models_endpoint(
 async def test_provider_connection_rejects_non_ascii_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def accept_provider_url(url: str) -> str:
-        return url
-
     monkeypatch.setattr(
-        "app.providers.llm.openai_compatible.validate_external_http_url",
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
         accept_provider_url,
     )
     provider = OpenAICompatibleProvider(
@@ -197,3 +217,33 @@ async def test_provider_connection_rejects_non_ascii_api_key(
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.code == "provider_api_key_invalid_format"
+
+
+@pytest.mark.asyncio
+async def test_provider_request_uses_pinned_ip_with_original_host_and_sni(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))
+        ],
+    )
+    captured: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, request=request, json={"data": []})
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handle_request),
+    )
+
+    await provider.test_connection()
+
+    assert str(captured[0].url) == "https://93.184.216.34/v1/models"
+    assert captured[0].headers["host"] == "provider.example.com"
+    assert captured[0].extensions["sni_hostname"] == "provider.example.com"

@@ -2,7 +2,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from scripts.check_secrets import repository_files, scan_text
+from scripts.check_secrets import files_under, repository_files, scan_text
 
 
 def test_secret_scanner_detects_high_confidence_credentials() -> None:
@@ -34,3 +34,16 @@ def test_secret_scanner_includes_untracked_nonignored_files(tmp_path: Path) -> N
     files = {path.relative_to(tmp_path).as_posix() for path in repository_files(tmp_path)}
 
     assert files == {".gitignore", "tracked.txt", "untracked.txt"}
+
+
+def test_secret_scanner_can_include_ignored_release_artifacts(tmp_path: Path) -> None:
+    artifact = tmp_path / "dist" / "assets" / "app.js"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("compiled output", encoding="utf-8")
+    dependency = tmp_path / "dist" / "node_modules" / "dependency.js"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_text("dependency", encoding="utf-8")
+
+    files = files_under([tmp_path / "dist"])
+
+    assert files == [artifact]

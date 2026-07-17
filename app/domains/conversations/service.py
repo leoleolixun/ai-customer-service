@@ -228,11 +228,33 @@ class ConversationService:
         return conversation
 
     async def list_messages(
-        self, principal: CustomerPrincipal, conversation_id: UUID
+        self,
+        principal: CustomerPrincipal,
+        conversation_id: UUID,
+        *,
+        limit: int = 100,
+        before_id: UUID | None = None,
     ) -> list[MessageResponse]:
         await self.get_session(principal, conversation_id)
+        before = None
+        if before_id is not None:
+            before = await self.repository.get_message_cursor(
+                tenant_id=principal.tenant_id,
+                conversation_id=conversation_id,
+                message_id=before_id,
+            )
+            if before is None:
+                raise AppError(
+                    status_code=400,
+                    code="message_cursor_invalid",
+                    title="Invalid message cursor",
+                    detail="The before cursor does not belong to this conversation.",
+                )
         messages = await self.repository.list_messages(
-            tenant_id=principal.tenant_id, conversation_id=conversation_id
+            tenant_id=principal.tenant_id,
+            conversation_id=conversation_id,
+            limit=limit,
+            before=before,
         )
         citations = await self.knowledge.list_citations_for_messages(
             tenant_id=principal.tenant_id,
@@ -301,29 +323,11 @@ class ConversationService:
                 idempotency_key=idempotency_key,
             )
             if existing is not None:
-                reply = await self.repository.get_reply(
-                    tenant_id=principal.tenant_id, user_message_id=existing.id
-                )
-                if reply is not None and reply.status == MessageStatus.COMPLETED:
-                    return PreparedChat(
-                        principal=principal,
-                        locale=locale,
-                        conversation=conversation,
-                        user_message=existing,
-                        assistant_message=reply,
-                        history=[],
-                        model_config=None,
-                        provider_account=None,
-                        evidence=[],
-                        replay=True,
-                    )
-                raise AppError(
-                    status_code=409,
-                    code="idempotent_message_incomplete",
-                    title="Message already accepted",
-                    detail=(
-                        "The original request is still running or failed; use a new key to retry."
-                    ),
+                return await self._idempotent_result(
+                    principal=principal,
+                    locale=locale,
+                    conversation=conversation,
+                    user_message=existing,
                 )
 
         active = await self.models.get_active_chat_configuration(
@@ -371,15 +375,34 @@ class ConversationService:
         previous = await self.repository.get_recent_completed_messages(
             tenant_id=principal.tenant_id, conversation_id=conversation.id
         )
-        user_message, assistant_message = await self.repository.create_message_pair(
-            tenant_id=principal.tenant_id,
-            application_id=principal.application_id,
-            conversation_id=conversation.id,
-            content=content.strip(),
-            idempotency_key=idempotency_key,
-            model_config_id=model_config.id,
-        )
-        await self.session.commit()
+        try:
+            user_message, assistant_message = await self.repository.create_message_pair(
+                tenant_id=principal.tenant_id,
+                application_id=principal.application_id,
+                conversation_id=conversation.id,
+                content=content.strip(),
+                idempotency_key=idempotency_key,
+                model_config_id=model_config.id,
+            )
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            if not idempotency_key:
+                raise
+            existing = await self.repository.get_idempotent_user_message(
+                tenant_id=principal.tenant_id,
+                conversation_id=conversation_id,
+                idempotency_key=idempotency_key,
+            )
+            if existing is None:
+                raise
+            conversation = await self.get_session(principal, conversation_id)
+            return await self._idempotent_result(
+                principal=principal,
+                locale=locale,
+                conversation=conversation,
+                user_message=existing,
+            )
         history = [
             ChatMessage(role="system", content=self._grounding_prompt(evidence, locale=locale))
         ]
@@ -441,7 +464,7 @@ class ConversationService:
                     yield self._sse("message.delta", {"delta": chunk.text})
                 prompt_tokens = max(prompt_tokens, chunk.prompt_tokens)
                 completion_tokens = max(completion_tokens, chunk.completion_tokens)
-            await self._ensure_ai_reply_allowed(prepared)
+            await self._ensure_ai_reply_allowed(prepared, for_update=True)
             duration_ms = int((perf_counter() - started) * 1000)
             content = "".join(content_parts).rstrip()
             cost = self._estimate_cost(model_config, prompt_tokens, completion_tokens)
@@ -505,7 +528,7 @@ class ConversationService:
         response = localized.get(prepared.grounding_status, localized["no_evidence"])
         await self._ensure_ai_reply_allowed(prepared)
         yield self._sse("message.delta", {"delta": response})
-        await self._ensure_ai_reply_allowed(prepared)
+        await self._ensure_ai_reply_allowed(prepared, for_update=True)
         await self.repository.complete_assistant_message(
             prepared.assistant_message,
             content=response,
@@ -544,10 +567,13 @@ class ConversationService:
             self._message_response(prepared.assistant_message, citations).model_dump(mode="json"),
         )
 
-    async def _ensure_ai_reply_allowed(self, prepared: PreparedChat) -> None:
+    async def _ensure_ai_reply_allowed(
+        self, prepared: PreparedChat, *, for_update: bool = False
+    ) -> None:
         state = await self.repository.get_conversation_state(
             tenant_id=prepared.principal.tenant_id,
             conversation_id=prepared.conversation.id,
+            for_update=for_update,
         )
         if state != (ConversationMode.AI, ConversationStatus.OPEN):
             raise AppError(
@@ -556,6 +582,37 @@ class ConversationService:
                 title="AI reply cancelled",
                 detail="The AI reply was cancelled because the conversation changed state.",
             )
+
+    async def _idempotent_result(
+        self,
+        *,
+        principal: CustomerPrincipal,
+        locale: ConversationLocale,
+        conversation: Conversation,
+        user_message: Message,
+    ) -> PreparedChat:
+        reply = await self.repository.get_reply(
+            tenant_id=principal.tenant_id, user_message_id=user_message.id
+        )
+        if reply is not None and reply.status == MessageStatus.COMPLETED:
+            return PreparedChat(
+                principal=principal,
+                locale=locale,
+                conversation=conversation,
+                user_message=user_message,
+                assistant_message=reply,
+                history=[],
+                model_config=None,
+                provider_account=None,
+                evidence=[],
+                replay=True,
+            )
+        raise AppError(
+            status_code=409,
+            code="idempotent_message_incomplete",
+            title="Message already accepted",
+            detail="The original request is still running or failed; use a new key to retry.",
+        )
 
     async def _mark_failed(
         self,
@@ -617,18 +674,14 @@ class ConversationService:
 
     @staticmethod
     def _evidence_gate(results: list[RetrievedChunk]) -> list[RetrievedChunk]:
-        lexical_results = [result for result in results if result.keyword_score >= 0.15]
-        if lexical_results:
-            strongest = max(result.keyword_score for result in lexical_results)
-            cutoff = max(0.15, strongest * 0.9)
-            return sorted(
-                (result for result in lexical_results if result.keyword_score >= cutoff),
-                key=lambda result: (result.keyword_score, result.score),
-                reverse=True,
-            )[:5]
         return sorted(
-            (result for result in results if result.vector_similarity >= 0.72),
-            key=lambda result: (result.vector_similarity, result.score),
+            (
+                result
+                for result in results
+                if result.keyword_score >= result.keyword_score_threshold
+                or result.vector_similarity >= result.vector_similarity_threshold
+            ),
+            key=lambda result: (result.score, result.keyword_score, result.vector_similarity),
             reverse=True,
         )[:5]
 
@@ -748,24 +801,6 @@ class ConversationService:
     def _conflicting_evidence(
         question: str, evidence: list[RetrievedChunk]
     ) -> list[RetrievedChunk]:
-        normalized = " ".join(question.casefold().split())
-        markers = (
-            "还是",
-            "冲突",
-            "两份",
-            "两个说法",
-            "哪个",
-            "哪一份",
-            "到底",
-            "准确",
-            "最新版",
-            "依据",
-            "承诺",
-            "conflict",
-            "which version",
-        )
-        question_values = set(re.findall(r"\b\d{1,4}\b", normalized))
-        conflict_intent = any(marker in normalized for marker in markers)
         question_tokens = {
             token
             for token in lexicalize(question).split()
@@ -779,8 +814,6 @@ class ConversationService:
             left_values = set(re.findall(r"\b\d{1,4}\b", left.chunk.content))
             right_values = set(re.findall(r"\b\d{1,4}\b", right.chunk.content))
             if not left_values or not right_values or left_values == right_values:
-                continue
-            if not conflict_intent and not question_values & (left_values | right_values):
                 continue
             left_tokens = ConversationService._conflict_tokens(left)
             right_tokens = ConversationService._conflict_tokens(right)

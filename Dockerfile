@@ -11,11 +11,13 @@ COPY packages/widget/package.json ./packages/widget/package.json
 RUN npm ci
 
 COPY apps/admin ./apps/admin
+COPY apps/demo ./apps/demo
 COPY packages/sdk ./packages/sdk
 COPY packages/widget ./packages/widget
 RUN npm run build --workspace @ai-support/sdk \
     && npm run build --workspace @ai-support/widget \
-    && npm run build --workspace @ai-support/admin
+    && npm run build --workspace @ai-support/admin \
+    && npm run build --workspace @ai-support/demo
 
 
 FROM python:3.12-slim AS runtime
@@ -42,6 +44,7 @@ COPY migrations ./migrations
 COPY scripts ./scripts
 COPY alembic.ini ./
 COPY --from=frontend /src/apps/admin/dist ./apps/admin/dist
+COPY --from=frontend /src/apps/demo/dist ./apps/demo/dist
 COPY --from=frontend /src/packages/sdk/dist ./packages/sdk/dist
 COPY --from=frontend /src/packages/widget/dist ./packages/widget/dist
 RUN uv sync --frozen --no-dev

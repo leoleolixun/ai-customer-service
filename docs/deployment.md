@@ -211,6 +211,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 curl --fail --show-error "https://${DOMAIN}/health/ready"
 curl --fail --show-error "https://${DOMAIN}/console/" >/dev/null
+curl --fail --show-error "https://${DOMAIN}/demo/" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/widget/ai-support-widget.js" >/dev/null
 sudo certbot renew --dry-run
 ```
@@ -227,11 +228,24 @@ curl --fail --show-error "https://${DOMAIN}/health/live"
 curl --fail --show-error "https://${DOMAIN}/health/ready"
 curl --fail --show-error "https://${DOMAIN}/openapi.json" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/console/" >/dev/null
+curl --fail --show-error "https://${DOMAIN}/demo/" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/sdk/index.js" >/dev/null
 curl --fail --show-error "https://${DOMAIN}/widget/ai-support-widget.js" >/dev/null
 dc run --rm --no-deps migrate alembic current
 dc logs --since=10m api worker
 ```
+
+冻结候选镜像后扫描仓库、前端构建产物、验收报告和镜像内 `/app` 文件系统：
+
+```bash
+uv run python scripts/check_secrets.py \
+  --path /tmp/ai-cs-v1-acceptance/results \
+  --path /tmp/ai-cs-v1-acceptance/runtime.log
+sh scripts/check_image_secrets.sh "${APP_IMAGE}"
+```
+
+扫描结果必须与候选镜像 digest 一起保存。该脚本不会扫描数据库和对象存储中的业务内容；这些数据按租户隔离
+验收和备份恢复流程单独验证。
 
 业务验证还应覆盖：管理员登录、创建测试租户/应用、上传一份文档、Worker 完成索引、Widget SSE 回答带引用、
 无证据拒答、转人工和租户隔离。管理端、中立示例站点和 Widget 还要分别切换一次英文与简体中文，刷新后

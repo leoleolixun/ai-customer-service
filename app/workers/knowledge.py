@@ -1,7 +1,11 @@
 import asyncio
+import hashlib
 from uuid import UUID
 
-from app.core.database import async_session_factory, engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import engine
 from app.core.storage import get_object_storage
 from app.domains.knowledge.service import IngestionService
 from app.workers.celery_app import celery_app
@@ -21,12 +25,31 @@ def ingest_knowledge_document(tenant_id: str, document_id: str) -> None:
 
 async def _ingest(tenant_id: UUID, document_id: UUID) -> None:
     try:
-        async with async_session_factory() as session:
-            await IngestionService(session, get_object_storage()).process(
-                tenant_id=tenant_id,
-                document_id=document_id,
-            )
+        async with engine.connect() as connection:
+            lock_id = _document_lock_id(tenant_id, document_id)
+            if connection.dialect.name == "postgresql":
+                await connection.execute(
+                    text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+                )
+                await connection.commit()
+            try:
+                async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                    await IngestionService(session, get_object_storage()).process(
+                        tenant_id=tenant_id,
+                        document_id=document_id,
+                    )
+            finally:
+                if connection.dialect.name == "postgresql":
+                    await connection.execute(
+                        text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+                    )
+                    await connection.commit()
     finally:
         # Celery executes this async task through a fresh event loop.
         # Disposing prevents pooled asyncpg connections crossing event loops.
         await engine.dispose()
+
+
+def _document_lock_id(tenant_id: UUID, document_id: UUID) -> int:
+    digest = hashlib.sha256(tenant_id.bytes + document_id.bytes).digest()[:8]
+    return int.from_bytes(digest, byteorder="big", signed=True)

@@ -89,7 +89,7 @@ const AgentPage: React.FC = () => {
           <List disablePadding sx={{ overflowY: 'auto' }}>
             {active.map((handoff) => (
               <ListItemButton key={handoff.id} selected={handoff.id === selectedId} onClick={() => setSelectedId(handoff.id)} sx={{ alignItems: 'flex-start', py: 1.5 }}>
-                <ListItemText primary={handoff.reason || messages.agent.supportRequested} secondary={`${labelValue(handoff.status)} · ${new Date(handoff.created_at).toLocaleTimeString(language)}`} primaryTypographyProps={{ fontSize: 13, fontWeight: 650, noWrap: true }} secondaryTypographyProps={{ fontSize: 11 }} />
+                <ListItemText primary={handoff.reason ? labelValue(handoff.reason) : messages.agent.supportRequested} secondary={`${labelValue(handoff.status)} · ${new Date(handoff.created_at).toLocaleTimeString(language)}`} primaryTypographyProps={{ fontSize: 13, fontWeight: 650, noWrap: true }} secondaryTypographyProps={{ fontSize: 11 }} />
               </ListItemButton>
             ))}
           </List>
@@ -101,7 +101,7 @@ const AgentPage: React.FC = () => {
               <Box sx={{ alignItems: { sm: 'center' }, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1, justifyContent: 'space-between', p: 2 }}>
                 <Box sx={{ minWidth: 0 }}>
                   <Typography fontWeight={700}>{format(messages.agent.conversation, { id: selected.conversation_id.slice(0, 8) })}</Typography>
-                  <Typography color="text.secondary" fontSize={12}>{selected.reason || messages.agent.supportRequested}</Typography>
+                  <Typography color="text.secondary" fontSize={12}>{selected.reason ? labelValue(selected.reason) : messages.agent.supportRequested}</Typography>
                   {selected.summary && (
                     <Typography color="text.secondary" fontSize={12} mt={0.75} sx={{ whiteSpace: 'pre-wrap' }}>
                       {format(messages.agent.summary, { summary: selected.summary })}

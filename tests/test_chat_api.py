@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -9,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.security import hash_password
-from app.domains.conversations.models import Message, MessageSender
+from app.domains.conversations.models import Message, MessageSender, MessageStatus
 from app.domains.conversations.schemas import ConversationLocale
 from app.domains.conversations.service import HUMAN_REQUIRED_RESPONSE, ConversationService
 from app.domains.identities.models import StaffUser, TenantMembership, TenantRole
@@ -71,9 +72,28 @@ def test_conflicting_numeric_sources_are_detected() -> None:
             keyword_score=0.9,
         ),
     ]
-    assert ConversationService._has_conflicting_evidence(
-        "节日商品到底是 60 天还是 90 天可以退?", evidence
+    assert ConversationService._has_conflicting_evidence("节日商品退货期限是多久?", evidence)
+
+
+def test_evidence_gate_uses_the_threshold_attached_to_each_knowledge_base() -> None:
+    rejected = RetrievedChunk(
+        chunk=KnowledgeChunk(content="A"),
+        document=KnowledgeDocument(id=uuid4(), title="Strict base"),
+        score=0.9,
+        vector_similarity=0.75,
+        keyword_score=0,
+        vector_similarity_threshold=0.8,
     )
+    accepted = RetrievedChunk(
+        chunk=KnowledgeChunk(content="B"),
+        document=KnowledgeDocument(id=uuid4(), title="Calibrated base"),
+        score=0.8,
+        vector_similarity=0.73,
+        keyword_score=0,
+        vector_similarity_threshold=0.7,
+    )
+
+    assert ConversationService._evidence_gate([rejected, accepted]) == [accepted]
 
 
 def test_chat_history_keeps_latest_messages_within_character_budget() -> None:
@@ -250,6 +270,69 @@ async def test_chat_sse_idempotency_and_user_isolation(
     assert len(model_calls.json()) == 1
     assert model_calls.json()[0]["model_name"] == "fake-chat"
     assert model_calls.json()[0]["conversation_id"] == conversation_id
+
+
+async def test_message_history_returns_latest_page_and_supports_before_cursor(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    setup = await setup_chat_application(client, session_factory)
+    token = await issue_customer_token(client, setup["api_key"], "history-customer")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post("/v1/chat/sessions", headers=headers, json={})
+    assert created.status_code == 201, created.text
+    conversation_id = UUID(created.json()["id"])
+
+    started_at = datetime.now(UTC)
+    async with session_factory() as session:
+        session.add_all(
+            [
+                Message(
+                    tenant_id=setup["tenant"].id,
+                    application_id=UUID(setup["application"]["id"]),
+                    conversation_id=conversation_id,
+                    sender=MessageSender.USER,
+                    content=f"history-{index:03d}",
+                    status=MessageStatus.COMPLETED,
+                    created_at=started_at + timedelta(microseconds=index),
+                )
+                for index in range(105)
+            ]
+        )
+        await session.commit()
+
+    default_page = await client.get(
+        f"/v1/chat/sessions/{conversation_id}/messages",
+        headers=headers,
+    )
+    assert default_page.status_code == 200, default_page.text
+    assert len(default_page.json()) == 100
+    assert default_page.json()[0]["content"] == "history-005"
+    assert default_page.json()[-1]["content"] == "history-104"
+
+    latest = await client.get(
+        f"/v1/chat/sessions/{conversation_id}/messages?limit=10",
+        headers=headers,
+    )
+    assert [item["content"] for item in latest.json()] == [
+        f"history-{index:03d}" for index in range(95, 105)
+    ]
+
+    before = latest.json()[0]["id"]
+    previous = await client.get(
+        f"/v1/chat/sessions/{conversation_id}/messages?limit=10&before={before}",
+        headers=headers,
+    )
+    assert [item["content"] for item in previous.json()] == [
+        f"history-{index:03d}" for index in range(85, 95)
+    ]
+
+    invalid = await client.get(
+        f"/v1/chat/sessions/{conversation_id}/messages?before={uuid4()}",
+        headers=headers,
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["code"] == "message_cursor_invalid"
 
 
 async def test_chat_returns_localized_rule_based_refusal(

@@ -1,4 +1,4 @@
-import { AppWindow, FileUp, Link2, Plus, RefreshCw, Repeat2, Search, Trash2 } from 'lucide-react';
+import { AppWindow, FileUp, Link2, Plus, RefreshCw, Repeat2, Search, Settings2, Trash2 } from 'lucide-react';
 import {
   Alert,
   Box,
@@ -43,7 +43,7 @@ import PageHeader from '@/components/PageHeader';
 import { useI18n } from '@/i18n/I18nProvider';
 
 const KnowledgePage: React.FC = () => {
-  const { messages } = useI18n();
+  const { labelValue, messages } = useI18n();
   const queryClient = useQueryClient();
   const { data: bases } = useSuspenseQuery({
     queryKey: ['knowledge-bases'],
@@ -93,7 +93,7 @@ const KnowledgePage: React.FC = () => {
           <List disablePadding>
             {bases.map((base) => (
               <ListItemButton key={base.id} selected={base.id === selectedId} onClick={() => setSelectedId(base.id)}>
-                <ListItemText primary={base.name} secondary={`${base.embedding_model_name} · ${base.status}`} primaryTypographyProps={{ fontSize: 14, fontWeight: 650 }} secondaryTypographyProps={{ fontSize: 11 }} />
+                <ListItemText primary={base.name} secondary={`${base.embedding_model_name} · ${labelValue(base.status)}`} primaryTypographyProps={{ fontSize: 14, fontWeight: 650 }} secondaryTypographyProps={{ fontSize: 11 }} />
               </ListItemButton>
             ))}
           </List>
@@ -140,6 +140,9 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
   });
   const [uploadOpen, setUploadOpen] = useState(false);
   const [bindOpen, setBindOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keywordThreshold, setKeywordThreshold] = useState(String(base.keyword_score_threshold));
+  const [vectorThreshold, setVectorThreshold] = useState(String(base.vector_similarity_threshold));
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -251,6 +254,38 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
     }
   }, [base.id, messages.common.requestFailed, query]);
 
+  const openSettings = useCallback(() => {
+    setKeywordThreshold(String(base.keyword_score_threshold));
+    setVectorThreshold(String(base.vector_similarity_threshold));
+    setSettingsOpen(true);
+  }, [base.keyword_score_threshold, base.vector_similarity_threshold]);
+
+  const saveSettings = useCallback(async () => {
+    const keyword = Number(keywordThreshold);
+    const vector = Number(vectorThreshold);
+    if (![keyword, vector].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/admin/knowledge-bases/${base.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          keyword_score_threshold: keyword,
+          vector_similarity_threshold: vector,
+        }),
+      });
+      await queryClient.invalidateQueries({ queryKey: ['knowledge-bases'] });
+      setSettingsOpen(false);
+    } catch (cause) {
+      setError(errorMessage(cause, messages.common.requestFailed));
+    } finally {
+      setBusy(false);
+    }
+  }, [base.id, keywordThreshold, messages.common.requestFailed, queryClient, vectorThreshold]);
+
+  const thresholdsValid = [Number(keywordThreshold), Number(vectorThreshold)]
+    .every((value) => Number.isFinite(value) && value >= 0 && value <= 1);
+
   return (
     <>
       <Box sx={{ alignItems: { sm: 'center' }, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, justifyContent: 'space-between', mb: 2 }}>
@@ -262,8 +297,19 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
               dimensions: base.embedding_dimension,
             })}
           </Typography>
+          <Typography color="text.secondary" fontSize={11}>
+            {format(messages.knowledge.retrievalThresholds, {
+              keyword: base.keyword_score_threshold.toFixed(2),
+              vector: base.vector_similarity_threshold.toFixed(2),
+            })}
+          </Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
+          <Tooltip title={messages.knowledge.retrievalSettings}>
+            <IconButton aria-label={messages.knowledge.retrievalSettings} onClick={openSettings}>
+              <Settings2 size={17} />
+            </IconButton>
+          </Tooltip>
           <Button startIcon={<Link2 size={15} />} disabled={boundApplications.length === applications.length} onClick={() => setBindOpen(true)}>{messages.knowledge.bindApp}</Button>
           <Button variant="contained" startIcon={<FileUp size={15} />} onClick={() => openUpload()}>{messages.knowledge.upload}</Button>
         </Box>
@@ -306,6 +352,18 @@ const KnowledgeDetail: React.FC<{ base: KnowledgeBase }> = ({ base }) => {
 
       <Dialog open={uploadOpen} onClose={() => setUploadOpen(false)} fullWidth maxWidth="sm"><DialogTitle>{replacement ? format(messages.knowledge.replaceTitle, { name: replacement.title }) : messages.knowledge.uploadDocument}</DialogTitle><DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>{replacement && <Alert severity="info">{messages.knowledge.replacementInfo}</Alert>}<Button component="label" variant="outlined" startIcon={<FileUp size={16} />}>{file?.name ?? messages.knowledge.chooseFile}<input hidden type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></Button><TextField label={messages.knowledge.documentTitle} value={title} onChange={(event) => setTitle(event.target.value)} /><TextField label={messages.knowledge.sourceUrl} value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} /></DialogContent><DialogActions><Button onClick={() => setUploadOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!file || busy} onClick={() => void upload()}>{replacement ? messages.knowledge.uploadReplacement : messages.knowledge.upload}</Button></DialogActions></Dialog>
       <Dialog open={bindOpen} onClose={() => setBindOpen(false)} fullWidth maxWidth="xs"><DialogTitle>{messages.knowledge.bindToApplication}</DialogTitle><DialogContent sx={{ pt: '8px !important' }}><FormControl fullWidth><InputLabel>{messages.common.application}</InputLabel><Select label={messages.common.application} value={applicationId} onChange={(event) => setApplicationId(event.target.value)}>{applications.filter((application) => !boundApplications.some((bound) => bound.id === application.id)).map((application) => <MenuItem key={application.id} value={application.id}><Box sx={{ alignItems: 'center', display: 'flex', gap: 1 }}><AppWindow size={15} />{application.name}</Box></MenuItem>)}</Select></FormControl></DialogContent><DialogActions><Button onClick={() => setBindOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!applicationId || busy} onClick={() => void bind()}>{messages.knowledge.bind}</Button></DialogActions></Dialog>
+      <Dialog open={settingsOpen} onClose={() => !busy && setSettingsOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>{messages.knowledge.retrievalSettings}</DialogTitle>
+        <DialogContent sx={{ display: 'grid', gap: 2, pt: '8px !important' }}>
+          <TextField type="number" label={messages.knowledge.keywordThreshold} value={keywordThreshold} onChange={(event) => setKeywordThreshold(event.target.value)} inputProps={{ min: 0, max: 1, step: 0.01 }} />
+          <TextField type="number" label={messages.knowledge.vectorThreshold} value={vectorThreshold} onChange={(event) => setVectorThreshold(event.target.value)} inputProps={{ min: 0, max: 1, step: 0.01 }} />
+          <Typography color="text.secondary" fontSize={12}>{messages.knowledge.thresholdHelp}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={busy} onClick={() => setSettingsOpen(false)}>{messages.common.cancel}</Button>
+          <Button variant="contained" disabled={busy || !thresholdsValid} onClick={() => void saveSettings()}>{messages.knowledge.saveRetrievalSettings}</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={Boolean(deleting)} onClose={() => !busy && setDeleting(null)} fullWidth maxWidth="xs"><DialogTitle>{messages.knowledge.deleteDocumentTitle}</DialogTitle><DialogContent><Typography color="text.secondary" fontSize={13}>{format(messages.knowledge.deleteDocumentDescription, { name: deleting?.title ?? '' })}</Typography></DialogContent><DialogActions><Button onClick={() => setDeleting(null)} disabled={busy}>{messages.common.cancel}</Button><Button color="error" variant="contained" disabled={busy} onClick={() => void deleteDocument()}>{messages.common.delete}</Button></DialogActions></Dialog>
     </>
   );

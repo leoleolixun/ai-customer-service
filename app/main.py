@@ -69,6 +69,14 @@ def mount_release_assets(application: FastAPI) -> None:
             del path
             return FileResponse(admin_index)
 
+    demo_dist = PROJECT_ROOT / "apps" / "demo" / "dist"
+    if (demo_dist / "index.html").is_file():
+        application.mount(
+            "/demo",
+            StaticFiles(directory=demo_dist, html=True),
+            name="support-demo",
+        )
+
     for route, relative_path, name in (
         ("/sdk", Path("packages/sdk/dist"), "support-sdk"),
         ("/widget", Path("packages/widget/dist"), "support-widget"),

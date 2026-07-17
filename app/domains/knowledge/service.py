@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.security import StaffPrincipal
 from app.domains.applications.models import Application
@@ -84,6 +85,8 @@ class KnowledgeBaseService:
                 description=request.description.strip(),
                 model_config=model_config,
                 embedding_version=request.embedding_version,
+                keyword_score_threshold=request.keyword_score_threshold,
+                vector_similarity_threshold=request.vector_similarity_threshold,
             )
             model_config.status = ModelStatus.ACTIVE
             await self._audit(actor, "knowledge_base.create", knowledge_base.id, request_id)
@@ -118,6 +121,10 @@ class KnowledgeBaseService:
             knowledge_base.description = request.description.strip()
         if request.status is not None:
             knowledge_base.status = request.status
+        if request.keyword_score_threshold is not None:
+            knowledge_base.keyword_score_threshold = request.keyword_score_threshold
+        if request.vector_similarity_threshold is not None:
+            knowledge_base.vector_similarity_threshold = request.vector_similarity_threshold
         try:
             await self.session.flush()
             await self._audit(actor, "knowledge_base.update", knowledge_base.id, request_id)
@@ -230,6 +237,8 @@ class KnowledgeBaseService:
             query_vector=vectors[0],
             lexical_query=lexicalize(query),
             limit=top_k,
+            keyword_score_threshold=knowledge_base.keyword_score_threshold,
+            vector_similarity_threshold=knowledge_base.vector_similarity_threshold,
         )
 
     async def search_for_application(
@@ -328,6 +337,14 @@ class DocumentService:
                     title="Source URL invalid",
                     detail="source_url must be an absolute HTTP or HTTPS URL.",
                 )
+
+        if not await self.knowledge.lock_tenant(tenant_id):
+            raise AppError(
+                status_code=404,
+                code="tenant_not_found",
+                title="Tenant not found",
+                detail="The tenant no longer exists.",
+            )
         supersedes = None
         if replace_document_id is not None:
             supersedes = await self.knowledge.get_document(
@@ -338,13 +355,48 @@ class DocumentService:
             if supersedes is None or supersedes.status == DocumentStatus.DELETED:
                 self._raise_document_not_found()
 
+        content_hash = hashlib.sha256(content).hexdigest()
+        duplicate = await self.knowledge.find_duplicate_content(
+            tenant_id=tenant_id,
+            base_id=base_id,
+            content_hash=content_hash,
+        )
+        if duplicate is not None:
+            unchanged = supersedes is not None and duplicate.id == supersedes.id
+            raise AppError(
+                status_code=409,
+                code=("document_content_unchanged" if unchanged else "document_content_duplicate"),
+                title=("Document content unchanged" if unchanged else "Duplicate document"),
+                detail=(
+                    "The replacement has the same content as the current document."
+                    if unchanged
+                    else "The same content already exists in this knowledge base."
+                ),
+            )
+
+        settings = get_settings()
+        document_count, storage_bytes = await self.knowledge.tenant_document_usage(tenant_id)
+        if document_count >= settings.knowledge_document_limit_per_tenant:
+            raise AppError(
+                status_code=409,
+                code="knowledge_document_quota_exceeded",
+                title="Document quota exceeded",
+                detail="Delete unused documents or increase the tenant document quota.",
+            )
+        if storage_bytes + len(content) > settings.knowledge_storage_limit_bytes_per_tenant:
+            raise AppError(
+                status_code=413,
+                code="knowledge_storage_quota_exceeded",
+                title="Knowledge storage quota exceeded",
+                detail="Delete unused documents or increase the tenant storage quota.",
+            )
+
         document_id = uuid4()
         version = supersedes.version + 1 if supersedes else 1
         object_key = (
             f"tenants/{tenant_id}/knowledge/{base_id}/documents/"
             f"{document_id}/v{version}/{safe_filename}"
         )
-        content_hash = hashlib.sha256(content).hexdigest()
         await self.storage.put(object_key, content, resolved_mime)
         try:
             document, job = await self.knowledge.create_document(
