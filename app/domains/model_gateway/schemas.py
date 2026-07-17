@@ -9,6 +9,7 @@ from app.domains.model_gateway.models import (
     ProviderKind,
     ProviderScope,
     ProviderStatus,
+    ThinkingMode,
 )
 
 
@@ -101,6 +102,7 @@ class ModelConfigCreate(BaseModel):
     embedding_dimension: int | None = Field(default=None, ge=8, le=16_384)
     temperature: float = Field(default=0.2, ge=0, le=2)
     max_tokens: int = Field(default=1024, ge=1, le=128_000)
+    thinking_mode: ThinkingMode = ThinkingMode.PROVIDER_DEFAULT
     input_price_micros_per_million: int = Field(default=0, ge=0)
     output_price_micros_per_million: int = Field(default=0, ge=0)
 
@@ -110,6 +112,11 @@ class ModelConfigCreate(BaseModel):
             raise ValueError("embedding_dimension is required for embedding models")
         if self.purpose == ModelPurpose.CHAT and self.embedding_dimension is not None:
             raise ValueError("embedding_dimension is only valid for embedding models")
+        if (
+            self.purpose == ModelPurpose.EMBEDDING
+            and self.thinking_mode != ThinkingMode.PROVIDER_DEFAULT
+        ):
+            raise ValueError("thinking_mode is only configurable for chat models")
         return self
 
 
@@ -125,6 +132,7 @@ class ModelConfigResponse(BaseModel):
     embedding_dimension: int | None
     temperature: float
     max_tokens: int
+    thinking_mode: ThinkingMode
     input_price_micros_per_million: int
     output_price_micros_per_million: int
     status: ModelStatus

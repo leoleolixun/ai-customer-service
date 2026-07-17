@@ -6,7 +6,7 @@ import httpx
 
 from app.core.errors import AppError
 from app.core.network import PinnedHTTPURL, resolve_external_http_url
-from app.providers.llm.base import ChatChunk, ChatMessage
+from app.providers.llm.base import ChatChunk, ChatMessage, ChatThinkingMode
 
 
 class OpenAICompatibleProvider:
@@ -110,6 +110,7 @@ class OpenAICompatibleProvider:
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]:
         target = await resolve_external_http_url(self.base_url)
         payload = {
@@ -122,6 +123,8 @@ class OpenAICompatibleProvider:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if thinking_mode != "provider_default":
+            payload["thinking"] = {"type": thinking_mode}
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout_seconds,

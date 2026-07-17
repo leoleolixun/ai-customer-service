@@ -1800,6 +1800,10 @@
             "minimum": 0.0,
             "title": "Temperature",
             "type": "number"
+          },
+          "thinking_mode": {
+            "$ref": "#/components/schemas/ThinkingMode",
+            "default": "provider_default"
           }
         },
         "required": [
@@ -1874,6 +1878,9 @@
             "title": "Tenant Id",
             "type": "string"
           },
+          "thinking_mode": {
+            "$ref": "#/components/schemas/ThinkingMode"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1890,6 +1897,7 @@
           "embedding_dimension",
           "temperature",
           "max_tokens",
+          "thinking_mode",
           "input_price_micros_per_million",
           "output_price_micros_per_million",
           "status",
@@ -2345,6 +2353,15 @@
         },
         "title": "TenantUpdate",
         "type": "object"
+      },
+      "ThinkingMode": {
+        "enum": [
+          "provider_default",
+          "disabled",
+          "enabled"
+        ],
+        "title": "ThinkingMode",
+        "type": "string"
       },
       "UsageSummaryResponse": {
         "properties": {

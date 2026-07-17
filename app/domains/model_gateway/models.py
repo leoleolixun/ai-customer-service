@@ -45,6 +45,12 @@ class ModelStatus(StrEnum):
     ACTIVE = "active"
 
 
+class ThinkingMode(StrEnum):
+    PROVIDER_DEFAULT = "provider_default"
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+
 class AIProviderAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "ai_provider_accounts"
     __table_args__ = (
@@ -144,6 +150,17 @@ class AIModelConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     embedding_dimension: Mapped[int | None] = mapped_column(Integer, nullable=True)
     temperature: Mapped[float] = mapped_column(Float, default=0.2, nullable=False)
     max_tokens: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
+    thinking_mode: Mapped[ThinkingMode] = mapped_column(
+        Enum(
+            ThinkingMode,
+            name="thinking_mode",
+            native_enum=False,
+            create_constraint=True,
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        default=ThinkingMode.PROVIDER_DEFAULT,
+        nullable=False,
+    )
     input_price_micros_per_million: Mapped[int] = mapped_column(
         BigInteger, default=0, nullable=False
     )

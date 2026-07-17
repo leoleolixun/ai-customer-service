@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import pytest
 
-from app.providers.llm.base import ChatChunk, ChatMessage
+from app.providers.llm.base import ChatChunk, ChatMessage, ChatThinkingMode
 from scripts.real_provider_smoke import SmokeOptions, percentile, run_chat_sample, run_smoke
 
 
@@ -17,8 +17,9 @@ class SuccessfulProvider:
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]:
-        del messages, model, temperature, max_tokens
+        del messages, model, temperature, max_tokens, thinking_mode
         yield ChatChunk(text="acceptance-")
         yield ChatChunk(
             text="ok",
@@ -46,8 +47,9 @@ class EmptyStreamProvider(SuccessfulProvider):
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]:
-        del messages, model, temperature, max_tokens
+        del messages, model, temperature, max_tokens, thinking_mode
         yield ChatChunk(finish_reason="stop")
 
 

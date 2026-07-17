@@ -3,7 +3,7 @@ import math
 import re
 from collections.abc import AsyncIterator, Sequence
 
-from app.providers.llm.base import ChatChunk, ChatMessage
+from app.providers.llm.base import ChatChunk, ChatMessage, ChatThinkingMode
 
 
 class FakeChatProvider:
@@ -14,8 +14,9 @@ class FakeChatProvider:
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]:
-        del model, temperature, max_tokens
+        del model, temperature, max_tokens, thinking_mode
         user_message = next(
             (message.content for message in reversed(messages) if message.role == "user"), ""
         )

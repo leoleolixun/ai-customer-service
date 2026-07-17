@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from app.core.errors import AppError
-from app.providers.llm.base import ChatChunk, ChatMessage
+from app.providers.llm.base import ChatChunk, ChatMessage, ChatThinkingMode
 from app.providers.llm.openai_compatible import OpenAICompatibleProvider
 
 API_KEY_ENV = "AI_CS_PROVIDER_API_KEY"
@@ -32,6 +32,7 @@ class SmokeProvider(Protocol):
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]: ...
 
     async def embed(
@@ -52,6 +53,7 @@ class SmokeOptions:
     first_token_target_ms: float
     temperature: float = 0.2
     max_tokens: int = 256
+    thinking_mode: ChatThinkingMode = "provider_default"
     embedding_model: str | None = None
     embedding_dimensions: int = 0
 
@@ -70,6 +72,7 @@ async def run_chat_sample(
     model: str,
     temperature: float = 0.2,
     max_tokens: int = 256,
+    thinking_mode: ChatThinkingMode = "provider_default",
 ) -> dict[str, Any]:
     started = perf_counter()
     first_token_ms: float | None = None
@@ -87,6 +90,7 @@ async def run_chat_sample(
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,
+        thinking_mode=thinking_mode,
     ):
         if chunk.text:
             if first_token_ms is None:
@@ -119,6 +123,7 @@ async def run_smoke(provider: SmokeProvider, options: SmokeOptions) -> dict[str,
             model=options.chat_model,
             temperature=options.temperature,
             max_tokens=options.max_tokens,
+            thinking_mode=options.thinking_mode,
         )
         for _ in range(options.samples)
     ]
@@ -164,6 +169,7 @@ async def run_smoke(provider: SmokeProvider, options: SmokeOptions) -> dict[str,
             "samples": options.samples,
             "temperature": options.temperature,
             "max_tokens": options.max_tokens,
+            "thinking_mode": options.thinking_mode,
             "first_token_p50_ms": percentile(first_token_values, 0.50),
             "first_token_p95_ms": first_token_p95,
             "first_token_target_ms": options.first_token_target_ms,
@@ -196,6 +202,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--first-token-target-ms", type=float, default=5000.0)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument(
+        "--thinking-mode",
+        choices=("provider_default", "disabled", "enabled"),
+        default="provider_default",
+    )
     parser.add_argument("--embedding-model")
     parser.add_argument("--embedding-dimensions", type=int, default=0)
     parser.add_argument("--output", type=Path)
@@ -237,6 +248,7 @@ def main() -> int:
         first_token_target_ms=args.first_token_target_ms,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
+        thinking_mode=args.thinking_mode,
         embedding_model=args.embedding_model,
         embedding_dimensions=args.embedding_dimensions,
     )

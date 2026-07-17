@@ -13,6 +13,7 @@ from app.domains.model_gateway.models import (
     ProviderKind,
     ProviderScope,
     ProviderStatus,
+    ThinkingMode,
 )
 
 
@@ -104,6 +105,7 @@ class ModelGatewayRepository:
         embedding_dimension: int | None,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ThinkingMode,
         input_price: int,
         output_price: int,
     ) -> AIModelConfig:
@@ -116,6 +118,7 @@ class ModelGatewayRepository:
             embedding_dimension=embedding_dimension,
             temperature=temperature,
             max_tokens=max_tokens,
+            thinking_mode=thinking_mode,
             input_price_micros_per_million=input_price,
             output_price_micros_per_million=output_price,
         )

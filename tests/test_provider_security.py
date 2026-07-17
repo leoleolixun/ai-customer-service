@@ -1,3 +1,4 @@
+import json
 import socket
 from types import SimpleNamespace
 
@@ -6,6 +7,7 @@ import pytest
 
 from app.core.errors import AppError
 from app.core.network import PinnedHTTPURL, resolve_external_http_url, validate_external_http_url
+from app.providers.llm.base import ChatMessage, ChatThinkingMode
 from app.providers.llm.openai_compatible import OpenAICompatibleProvider
 
 
@@ -247,3 +249,56 @@ async def test_provider_request_uses_pinned_ip_with_original_host_and_sni(
     assert str(captured[0].url) == "https://93.184.216.34/v1/models"
     assert captured[0].headers["host"] == "provider.example.com"
     assert captured[0].extensions["sni_hostname"] == "provider.example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_mode", "expected_thinking"),
+    [
+        ("provider_default", None),
+        ("disabled", {"type": "disabled"}),
+        ("enabled", {"type": "enabled"}),
+    ],
+)
+async def test_provider_stream_sends_configured_thinking_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    thinking_mode: ChatThinkingMode,
+    expected_thinking: dict[str, str] | None,
+) -> None:
+    monkeypatch.setattr(
+        "app.providers.llm.openai_compatible.resolve_external_http_url",
+        accept_provider_url,
+    )
+    payloads: list[dict[str, object]] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        stream = (
+            'data: {"choices":[{"delta":{"content":"answer"},'
+            '"finish_reason":null}]}\n\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            '"usage":{"prompt_tokens":3,"completion_tokens":1}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, request=request, text=stream)
+
+    provider = OpenAICompatibleProvider(
+        base_url="https://provider.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handle_request),
+    )
+    chunks = [
+        chunk
+        async for chunk in provider.stream(
+            messages=[ChatMessage(role="user", content="question")],
+            model="chat-model",
+            temperature=0.2,
+            max_tokens=256,
+            thinking_mode=thinking_mode,
+        )
+    ]
+
+    assert "".join(chunk.text for chunk in chunks) == "answer"
+    assert payloads[0].get("thinking") == expected_thinking
+    if expected_thinking is None:
+        assert "thinking" not in payloads[0]

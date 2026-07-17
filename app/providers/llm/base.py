@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
+
+ChatThinkingMode = Literal["provider_default", "disabled", "enabled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,7 @@ class ChatProvider(Protocol):
         model: str,
         temperature: float,
         max_tokens: int,
+        thinking_mode: ChatThinkingMode,
     ) -> AsyncIterator[ChatChunk]: ...
 
 

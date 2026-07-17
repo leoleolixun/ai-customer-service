@@ -61,6 +61,7 @@ export interface ModelConfig {
   embedding_dimension: number | null;
   temperature: number;
   max_tokens: number;
+  thinking_mode: 'provider_default' | 'disabled' | 'enabled';
   status: 'inactive' | 'active';
   created_at: string;
   updated_at: string;

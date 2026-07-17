@@ -61,6 +61,7 @@ uv run python scripts/real_provider_smoke.py \
   --samples 10 \
   --temperature 0.2 \
   --max-tokens 256 \
+  --thinking-mode provider_default \
   --first-token-target-ms 5000 \
   --output /tmp/ai-cs-real-provider.json \
   --enforce
@@ -73,8 +74,10 @@ uv run python scripts/real_provider_smoke.py \
 --embedding-model provider-embedding-model --embedding-dimensions 1024
 ```
 
-脚本先请求 `/models`，再测量每次流式请求的首 Token 和完成耗时。默认使用 `temperature=0.2` 和
-`max_tokens=256`，为推理模型保留生成最终 `content` 的空间；验收报告会保存这两个参数。可选 Embedding 检查只记录返回向量数、
+脚本先请求 `/models`，再测量每次流式请求的首 Token 和完成耗时。默认使用 `temperature=0.2`、
+`max_tokens=256` 和 `thinking_mode=provider_default`，验收报告会保存这些参数。对于默认开启深度思考且
+可能在 Token 上限内只返回 `reasoning_content` 的模型，应按供应商协议显式使用
+`--thinking-mode disabled`，并让管理后台中的 Chat 模型配置保持一致。可选 Embedding 检查只记录返回向量数、
 维度和数值是否有限。报告不会保存 API Key、回答正文或向量值。发布记录必须注明供应商、模型、运行区域、
 样本数和未达到 5 秒目标时的网络或供应商原因。该脚本验证 Provider 协议和供应商延迟，完整平台链路还要
 在管理后台激活同一 Chat 模型，并通过 Widget 完成一次带引用问答。

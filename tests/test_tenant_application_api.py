@@ -359,10 +359,12 @@ async def test_fake_model_configuration_can_be_tested_and_activated(
             "name": "Primary chat",
             "model_name": "fake-chat",
             "purpose": "chat",
+            "thinking_mode": "disabled",
         },
     )
     assert model_config.status_code == 201, model_config.text
     assert model_config.json()["status"] == "inactive"
+    assert model_config.json()["thinking_mode"] == "disabled"
 
     activated = await client.post(
         f"/v1/admin/ai/model-configs/{model_config.json()['id']}/activate",

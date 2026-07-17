@@ -222,6 +222,7 @@ class ModelGatewayService:
                 embedding_dimension=request.embedding_dimension,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
+                thinking_mode=request.thinking_mode,
                 input_price=request.input_price_micros_per_million,
                 output_price=request.output_price_micros_per_million,
             )

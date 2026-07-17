@@ -65,6 +65,7 @@ const AIPage: React.FC = () => {
   const [remoteModelName, setRemoteModelName] = useState('');
   const [purpose, setPurpose] = useState<ModelConfig['purpose']>('chat');
   const [dimension, setDimension] = useState('1024');
+  const [thinkingMode, setThinkingMode] = useState<ModelConfig['thinking_mode']>('provider_default');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -173,18 +174,20 @@ const AIPage: React.FC = () => {
           model_name: remoteModelName,
           purpose,
           embedding_dimension: purpose === 'embedding' ? Number(dimension) : null,
+          thinking_mode: purpose === 'chat' ? thinkingMode : 'provider_default',
         }),
       });
       setModelOpen(false);
       setModelName('');
       setRemoteModelName('');
+      setThinkingMode('provider_default');
       await refresh();
     } catch (cause) {
       setError(errorMessage(cause, messages.common.requestFailed));
     } finally {
       setBusy(false);
     }
-  }, [dimension, messages.common.requestFailed, modelName, providerId, purpose, refresh, remoteModelName]);
+  }, [dimension, messages.common.requestFailed, modelName, providerId, purpose, refresh, remoteModelName, thinkingMode]);
 
   const activate = useCallback(async () => {
     if (!activateModel || !applicationId) return;
@@ -265,12 +268,12 @@ const AIPage: React.FC = () => {
         </Box>
         <TableContainer component={Paper} variant="outlined">
           <Table>
-            <TableHead><TableRow><TableCell>{messages.common.name}</TableCell><TableCell>{messages.ai.remoteModel}</TableCell><TableCell>{messages.ai.purpose}</TableCell><TableCell>{messages.ai.dimension}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell align="right">{messages.common.action}</TableCell></TableRow></TableHead>
+            <TableHead><TableRow><TableCell>{messages.common.name}</TableCell><TableCell>{messages.ai.remoteModel}</TableCell><TableCell>{messages.ai.purpose}</TableCell><TableCell>{messages.ai.thinkingMode}</TableCell><TableCell>{messages.ai.dimension}</TableCell><TableCell>{messages.common.status}</TableCell><TableCell align="right">{messages.common.action}</TableCell></TableRow></TableHead>
             <TableBody>
               {models.map((model) => (
                 <TableRow key={model.id} hover>
                   <TableCell><Typography fontWeight={650}>{model.name}</Typography></TableCell>
-                  <TableCell>{model.model_name}</TableCell><TableCell>{labelValue(model.purpose)}</TableCell><TableCell>{model.embedding_dimension ?? '—'}</TableCell>
+                  <TableCell>{model.model_name}</TableCell><TableCell>{labelValue(model.purpose)}</TableCell><TableCell>{model.purpose === 'chat' ? messages.ai[model.thinking_mode] : '—'}</TableCell><TableCell>{model.embedding_dimension ?? '—'}</TableCell>
                   <TableCell><Chip size="small" color={model.status === 'active' ? 'success' : 'default'} label={labelValue(model.status)} /></TableCell>
                   <TableCell align="right">{model.purpose === 'chat' && (model.status === 'active' ? <Button size="small" color="error" startIcon={<Power size={15} />} disabled={busy} onClick={() => void deactivate(model)}>{messages.ai.deactivate}</Button> : <Button size="small" startIcon={<Power size={15} />} disabled={busy} onClick={() => setActivateModel(model)}>{messages.ai.activate}</Button>)}</TableCell>
                 </TableRow>
@@ -297,6 +300,7 @@ const AIPage: React.FC = () => {
           <TextField label={messages.ai.configurationName} value={modelName} onChange={(event) => setModelName(event.target.value)} required />
           <TextField label={messages.ai.remoteModelName} value={remoteModelName} onChange={(event) => setRemoteModelName(event.target.value)} required />
           <FormControl><InputLabel>{messages.ai.purpose}</InputLabel><Select label={messages.ai.purpose} value={purpose} onChange={(event) => setPurpose(event.target.value as ModelConfig['purpose'])}><MenuItem value="chat">{messages.ai.chat}</MenuItem><MenuItem value="embedding">{messages.ai.embedding}</MenuItem></Select></FormControl>
+          {purpose === 'chat' && <FormControl><InputLabel>{messages.ai.thinkingMode}</InputLabel><Select label={messages.ai.thinkingMode} value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value as ModelConfig['thinking_mode'])}><MenuItem value="provider_default">{messages.ai.provider_default}</MenuItem><MenuItem value="disabled">{messages.ai.disabled}</MenuItem><MenuItem value="enabled">{messages.ai.enabled}</MenuItem></Select></FormControl>}
           {purpose === 'embedding' && <TextField label={messages.ai.embeddingDimension} type="number" value={dimension} onChange={(event) => setDimension(event.target.value)} inputProps={{ min: 8, max: 16384 }} />}
         </DialogContent>
         <DialogActions><Button onClick={() => setModelOpen(false)}>{messages.common.cancel}</Button><Button variant="contained" disabled={!providerId || !modelName.trim() || !remoteModelName.trim() || busy} onClick={() => void createModel()}>{messages.ai.saveModel}</Button></DialogActions>

@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.errors import AppError
 from app.core.security import hash_password
 from app.domains.conversations.models import Message, MessageSender, MessageStatus
 from app.domains.conversations.schemas import ConversationLocale
@@ -165,6 +167,13 @@ def test_grounding_prompt_instructs_the_selected_response_language() -> None:
 
     assert "Respond in English" in english
     assert "Respond in Simplified Chinese" in chinese
+
+
+def test_empty_provider_answer_is_not_persisted_as_success() -> None:
+    with pytest.raises(AppError) as exc_info:
+        ConversationService._validated_answer_content(["", "  "])
+
+    assert exc_info.value.code == "model_provider_empty_response"
 
 
 async def setup_chat_application(

@@ -459,6 +459,7 @@ class ConversationService:
                 model=model_config.model_name,
                 temperature=model_config.temperature,
                 max_tokens=model_config.max_tokens,
+                thinking_mode=model_config.thinking_mode.value,
             ):
                 await self._ensure_ai_reply_allowed(prepared)
                 if chunk.text:
@@ -468,7 +469,7 @@ class ConversationService:
                 completion_tokens = max(completion_tokens, chunk.completion_tokens)
             await self._ensure_ai_reply_allowed(prepared, for_update=True)
             duration_ms = int((perf_counter() - started) * 1000)
-            content = "".join(content_parts).rstrip()
+            content = self._validated_answer_content(content_parts)
             cost = self._estimate_cost(model_config, prompt_tokens, completion_tokens)
             await self.repository.complete_assistant_message(
                 prepared.assistant_message,
@@ -673,6 +674,21 @@ class ConversationService:
             + completion * config.output_price_micros_per_million
         )
         return total // 1_000_000
+
+    @staticmethod
+    def _validated_answer_content(content_parts: Sequence[str]) -> str:
+        content = "".join(content_parts).rstrip()
+        if content:
+            return content
+        raise AppError(
+            status_code=502,
+            code="model_provider_empty_response",
+            title="Model provider returned no answer",
+            detail=(
+                "The model provider completed without answer text. Check the model's "
+                "thinking mode and output token limit."
+            ),
+        )
 
     @staticmethod
     def _eligible_evidence(results: list[RetrievedChunk]) -> list[RetrievedChunk]:
